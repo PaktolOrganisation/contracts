@@ -1,0 +1,27 @@
+# Foundry
+cache/
+cache-hardhat/
+out/
+broadcast/
+
+# Coverage
+coverage/
+lcov.info
+coverage.txt
+
+# Hardhat
+artifacts/
+
+# Environment
+.env
+.env.*
+
+# Dependencies
+lib/
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
