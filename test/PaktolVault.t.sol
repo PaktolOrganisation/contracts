@@ -486,16 +486,18 @@ contract PaktolVaultTest is Test {
         assertGt(eure.balanceOf(treasury), 0);
     }
 
-    function test_harvest_sameBlock_noAction() public {
+    function test_harvest_revert_tooFrequent() public {
         _deposit(vaultStd, user, DEPOSIT);
-        _simulateYield(vaultStd, 40e18); // same block as deposit
+        _simulateYield(vaultStd, 40e18);
+        _warp(vaultStd.MIN_HARVEST_INTERVAL() - 1);
 
-        uint256 treasuryBefore = eure.balanceOf(treasury);
-
+        vm.expectRevert(abi.encodeWithSelector(
+            PaktolVault.HarvestTooFrequent.selector,
+            vaultStd.MIN_HARVEST_INTERVAL() - 1,
+            vaultStd.MIN_HARVEST_INTERVAL()
+        ));
         vm.prank(harvester);
-        vaultStd.harvest(); // elapsed == 0 → early return
-
-        assertEq(eure.balanceOf(treasury), treasuryBefore);
+        vaultStd.harvest();
     }
 
     function test_harvest_updatesTimestamp() public {

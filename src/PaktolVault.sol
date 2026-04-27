@@ -55,6 +55,10 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     ///         combined with _decimalsOffset() = 3 (virtual shares).
     uint256 public constant MIN_DEPOSIT = 1e9;
 
+    /// @notice Minimum time between two harvests. Prevents a compromised harvester
+    ///         from draining yield to the treasury via high-frequency calls.
+    uint256 public constant MIN_HARVEST_INTERVAL = 1 days;
+
     /* ─────────────────────────── IMMUTABLES ────────────────────────── */
 
     /// @notice Annual net yield cap in basis points (350 = 3.5% / 500 = 5%).
@@ -127,6 +131,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     error NotHarvester();
     error DepositTooSmall(uint256 assets, uint256 minimum);
     error TvlCapExceeded(uint256 current, uint256 cap);
+    error HarvestTooFrequent(uint256 elapsed, uint256 minimum);
     error InsufficientAllowance();
     error UseDepositWithAuth();
     error InvalidSignature();
@@ -471,6 +476,9 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     function harvest() external nonReentrant {
         if (msg.sender != owner() && msg.sender != harvester) revert NotHarvester();
 
+        uint256 elapsed = block.timestamp - lastHarvestTimestamp;
+        if (elapsed < MIN_HARVEST_INTERVAL) revert HarvestTooFrequent(elapsed, MIN_HARVEST_INTERVAL);
+
         uint256 current = totalAssets();
 
         // No yield or loss — reset snapshot and exit cleanly.
@@ -479,12 +487,6 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
             lastHarvestTimestamp = block.timestamp;
             return;
         }
-
-        uint256 elapsed = block.timestamp - lastHarvestTimestamp;
-
-        // Same-block guard: elapsed == 0 → maxNetYield == 0 → all yield to treasury.
-        // Return early — state is already up to date from the previous call.
-        if (elapsed == 0) return;
 
         uint256 grossYield = current - lastTotalAssets;
 
