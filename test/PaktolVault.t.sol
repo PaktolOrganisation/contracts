@@ -265,6 +265,7 @@ contract PaktolVaultTest is Test {
 
     function test_withdraw_basic() public {
         _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
         uint256 balBefore = eure.balanceOf(user);
 
         vm.prank(user);
@@ -280,7 +281,7 @@ contract PaktolVaultTest is Test {
         vm.prank(guardian);
         vaultStd.pause();
 
-        // Must succeed even while paused.
+        // Cooldown bypassed when paused — must succeed immediately.
         vm.prank(user);
         vaultStd.withdraw(DEPOSIT, user, user);
 
@@ -289,6 +290,7 @@ contract PaktolVaultTest is Test {
 
     function test_redeem_basic() public {
         uint256 shares = _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
         uint256 balBefore = eure.balanceOf(user);
 
         vm.prank(user);
@@ -300,6 +302,7 @@ contract PaktolVaultTest is Test {
 
     function test_withdraw_updates_lastTotalAssets() public {
         _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
 
         vm.prank(user);
         vaultStd.withdraw(DEPOSIT / 2, user, user);
@@ -661,6 +664,7 @@ contract PaktolVaultTest is Test {
         uint256 shares = _deposit(vaultStd, user, amount);
         assertApproxEqAbs(vaultStd.totalAssets(), amount, 1e9);
 
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
         vm.prank(user);
         vaultStd.redeem(shares, user, user);
 
@@ -708,18 +712,17 @@ contract PaktolVaultTest is Test {
     /* ─────────────────────── MAX WITHDRAW / REDEEM ──────────────────── */
 
     function test_maxWithdraw_fullLiquidity() public {
-        // AAVE aToken holds >= vault position → user can withdraw full position.
         _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
 
         uint256 expected = vaultStd.convertToAssets(vaultStd.balanceOf(user));
         assertApproxEqAbs(vaultStd.maxWithdraw(user), expected, 1e9);
     }
 
     function test_maxWithdraw_limitedByAaveLiquidity() public {
-        // Drain aToken's EURe backing to simulate shallow AAVE liquidity.
         _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
 
-        // Burn 900 EURe from aToken — only 100 EURe remains available.
         eure.burn(address(pool.aToken()), 900e18);
 
         assertEq(eure.balanceOf(address(pool.aToken())), 100e18);
@@ -732,25 +735,25 @@ contract PaktolVaultTest is Test {
 
     function test_maxRedeem_limitedByAaveLiquidity() public {
         uint256 shares = _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
 
-        // Only 100 EURe left in aToken.
         eure.burn(address(pool.aToken()), 900e18);
 
         uint256 maxR = vaultStd.maxRedeem(user);
-        // maxRedeem must be <= actual shares
         assertLe(maxR, shares);
-        // Converting maxRedeem shares → assets should be ~100 EURe
         assertApproxEqAbs(vaultStd.convertToAssets(maxR), 100e18, 1e9);
     }
 
     function test_maxWithdraw_idleCountsTowardLiquidity() public {
-        // Deposit, then simulate vault holding idle EURe (e.g. right after emergencyExit).
         _deposit(vaultStd, user, DEPOSIT);
+
+        vm.prank(guardian);
+        vaultStd.pause(); // pause so cooldown is bypassed for maxWithdraw
 
         vm.prank(owner);
         vaultStd.emergencyExitAave(); // all funds now idle in vault
 
-        // aToken balance is 0, but idle is 1000 — maxWithdraw should still return full position.
+        // aToken balance is 0, but idle is 1000 — maxWithdraw should return full position.
         uint256 expected = vaultStd.convertToAssets(vaultStd.balanceOf(user));
         assertApproxEqAbs(vaultStd.maxWithdraw(user), expected, 1e9);
     }
@@ -815,6 +818,105 @@ contract PaktolVaultTest is Test {
         vm.expectRevert();
         vm.prank(guardian);
         vaultStd.emergencyExitAave();
+    }
+
+    /* ─────────────────────── F-09: WITHDRAWAL COOLDOWN ─────────────── */
+
+    function test_f09_cooldown_blocks_immediate_withdraw() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        vm.expectRevert(abi.encodeWithSelector(
+            PaktolVault.WithdrawalCooldown.selector,
+            block.timestamp + vaultStd.WITHDRAWAL_COOLDOWN()
+        ));
+        vm.prank(user);
+        vaultStd.withdraw(DEPOSIT, user, user);
+    }
+
+    function test_f09_cooldown_blocks_immediate_redeem() public {
+        uint256 shares = _deposit(vaultStd, user, DEPOSIT);
+
+        vm.expectRevert(abi.encodeWithSelector(
+            PaktolVault.WithdrawalCooldown.selector,
+            block.timestamp + vaultStd.WITHDRAWAL_COOLDOWN()
+        ));
+        vm.prank(user);
+        vaultStd.redeem(shares, user, user);
+    }
+
+    function test_f09_cooldown_allows_withdraw_after_delay() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
+
+        vm.prank(user);
+        vaultStd.withdraw(DEPOSIT, user, user);
+
+        assertEq(eure.balanceOf(user), USER_BALANCE);
+    }
+
+    /// @dev Sandwich attempt: deposit just before harvest, cooldown blocks immediate exit.
+    function test_f09_sandwich_blocked_by_cooldown() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(365 days);
+        _simulateYield(vaultStd, 35e18);
+
+        // Attacker deposits just before harvest.
+        eure.mint(address(this), DEPOSIT);
+        vm.startPrank(address(this));
+        eure.approve(address(vaultStd), DEPOSIT);
+        uint256 attackShares = vaultStd.deposit(DEPOSIT, address(this));
+        vm.stopPrank();
+
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        // Attacker cannot withdraw immediately — cooldown blocks the exit.
+        vm.expectRevert();
+        vm.prank(address(this));
+        vaultStd.redeem(attackShares, address(this), address(this));
+    }
+
+    /// @dev Cooldown is per-user — user2 can withdraw normally while user1 is in cooldown.
+    function test_f09_cooldown_independent_per_user() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
+        _deposit(vaultStd, user2, DEPOSIT);
+
+        // user1 cooldown elapsed — can withdraw.
+        vm.prank(user);
+        vaultStd.withdraw(DEPOSIT, user, user);
+
+        // user2 just deposited — cannot withdraw yet.
+        vm.expectRevert();
+        vm.prank(user2);
+        vaultStd.withdraw(DEPOSIT, user2, user2);
+    }
+
+    /// @dev Cooldown is bypassed when vault is paused (emergency exit always possible).
+    function test_f09_cooldown_bypassed_when_paused() public {
+        uint256 shares = _deposit(vaultStd, user, DEPOSIT);
+
+        vm.prank(guardian);
+        vaultStd.pause();
+
+        // No warp — should succeed immediately because vault is paused.
+        vm.prank(user);
+        vaultStd.redeem(shares, user, user);
+
+        assertApproxEqAbs(eure.balanceOf(user), USER_BALANCE, 1e9);
+    }
+
+    /// @dev maxWithdraw and maxRedeem return 0 during cooldown.
+    function test_f09_maxWithdraw_zero_during_cooldown() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        assertEq(vaultStd.maxWithdraw(user), 0, "maxWithdraw must be 0 during cooldown");
+        assertEq(vaultStd.maxRedeem(user), 0, "maxRedeem must be 0 during cooldown");
+
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
+
+        assertGt(vaultStd.maxWithdraw(user), 0, "maxWithdraw must be non-zero after cooldown");
+        assertGt(vaultStd.maxRedeem(user), 0, "maxRedeem must be non-zero after cooldown");
     }
 
     /* ─────────────────────── depositWithPermit ──────────────────────── */
