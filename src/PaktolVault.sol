@@ -120,6 +120,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /* ───────────────────────────── ERRORS ──────────────────────────── */
 
     error ZeroAddress();
+    error ATokenMismatch(address provided, address expected);
     error CapOutOfRange(uint256 provided);
     error FeeOutOfRange(uint256 provided);
     error NotGuardian();
@@ -177,6 +178,9 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (signer_ == address(0)) revert ZeroAddress();
         if (capBps_ == 0 || capBps_ > BPS_DENOMINATOR) revert CapOutOfRange(capBps_);
         if (feeBps_ >= BPS_DENOMINATOR) revert FeeOutOfRange(feeBps_);
+
+        IAavePool.ReserveData memory reserve = IAavePool(aavePool_).getReserveData(address(asset_));
+        if (reserve.aTokenAddress != aToken_) revert ATokenMismatch(aToken_, reserve.aTokenAddress);
 
         TREASURY = treasury_;
         CAP_BPS = capBps_;

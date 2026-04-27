@@ -3,6 +3,28 @@ pragma solidity ^0.8.24;
 
 /// @notice Minimal AAVE v3 IPool interface — only the functions PaktolVault uses.
 interface IAavePool {
+    /// @notice Aave v3 reserve data — full struct layout required for correct ABI decoding.
+    struct ReserveData {
+        uint256 configuration;
+        uint128 liquidityIndex;
+        uint128 currentLiquidityRate;
+        uint128 variableBorrowIndex;
+        uint128 currentVariableBorrowRate;
+        uint128 currentStableBorrowRate;
+        uint40  lastUpdateTimestamp;
+        uint16  id;
+        address aTokenAddress;
+        address stableDebtTokenAddress;
+        address variableDebtTokenAddress;
+        address interestRateStrategyAddress;
+        uint128 accruedToTreasury;
+        uint128 unbacked;
+        uint128 isolationModeTotalDebt;
+    }
+
+    /// @notice Returns reserve data for the given asset. Used in constructor to validate aToken consistency.
+    function getReserveData(address asset) external view returns (ReserveData memory);
+
     /// @notice Supplies an amount of underlying asset into the reserve.
     /// @param asset        The underlying asset to supply.
     /// @param amount       The amount to supply.

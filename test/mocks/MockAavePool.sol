@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./MockEURe.sol";
+import "../../src/interfaces/IAavePool.sol";
 
 /// @title MockAToken
 /// @notice Simulates AAVE's aEURe rebasing token for testing.
@@ -65,6 +66,12 @@ contract MockAavePool {
     ) {
         underlying = underlying_;
         aToken = new MockAToken(underlying_);
+    }
+
+    function getReserveData(
+        address
+    ) external view returns (IAavePool.ReserveData memory data) {
+        data.aTokenAddress = address(aToken);
     }
 
     function supply(
