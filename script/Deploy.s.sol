@@ -30,6 +30,8 @@ import "../src/PaktolVault.sol";
 ///        VAULT_NAME            — ERC20 name for shares
 ///        VAULT_SYMBOL          — ERC20 symbol for shares
 contract Deploy is Script {
+    address constant GNOSIS_AAVE_V3_POOL = 0xb50201558B00496A145fE76f7424749556E326D8;
+
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
@@ -47,6 +49,22 @@ contract Deploy is Script {
         string memory symbol = vm.envString("VAULT_SYMBOL");
         address signer = vm.envAddress("SIGNER");
         bool requiresAuth = vm.envBool("REQUIRES_AUTH");
+
+        // ── Pre-broadcast checks ─────────────────────────────────────────
+        require(block.chainid == 100,                   "Wrong network: expected Gnosis Chain (chainid 100)");
+        require(aavePool == GNOSIS_AAVE_V3_POOL,        "AAVE_POOL is not the official Gnosis Chain Aave v3 Pool");
+        require(treasury != address(0),                 "TREASURY not set");
+        require(owner    != address(0),                 "OWNER not set");
+        require(guardian != address(0),                 "GUARDIAN not set");
+        require(harvester != address(0),                "HARVESTER not set");
+        require(signer   != address(0),                 "SIGNER not set");
+        require(capBps >= 1 && capBps <= 10_000,        "CAP_BPS out of range (1-10000)");
+        require(feeBps < 10_000,                        "FEE_BPS out of range (0-9999)");
+
+        IAavePool.ReserveData memory reserve = IAavePool(aavePool).getReserveData(asset);
+        require(reserve.aTokenAddress == aToken,        "ATOKEN does not match Aave reserve for ASSET");
+
+        console.log("Pre-broadcast checks passed.");
 
         vm.startBroadcast(deployerKey);
 
