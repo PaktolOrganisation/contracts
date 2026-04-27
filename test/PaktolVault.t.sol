@@ -817,6 +817,55 @@ contract PaktolVaultTest is Test {
         vaultStd.emergencyExitAave();
     }
 
+    /// @dev F-11: emergencyExitAave() must pause atomically so a concurrent deposit
+    ///      cannot immediately re-route idle EURe back into AAVE.
+    function test_f11_emergencyExit_autopause() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        assertFalse(vaultStd.paused(), "vault starts unpaused");
+
+        vm.prank(owner);
+        vaultStd.emergencyExitAave();
+
+        assertTrue(vaultStd.paused(), "vault must be paused after emergency exit");
+
+        // Deposit must be blocked — funds cannot re-enter AAVE.
+        vm.startPrank(user);
+        eure.approve(address(vaultStd), DEPOSIT);
+        vm.expectRevert();
+        vaultStd.deposit(DEPOSIT, user);
+        vm.stopPrank();
+    }
+
+    /// @dev F-11: emergencyExitAave() on an already-paused vault must not revert.
+    function test_f11_emergencyExit_alreadyPaused_noRevert() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        vm.prank(guardian);
+        vaultStd.pause();
+
+        // Must not revert even though vault is already paused.
+        vm.prank(owner);
+        vaultStd.emergencyExitAave();
+
+        assertTrue(vaultStd.paused());
+        assertEq(IERC20(vaultStd.ATOKEN()).balanceOf(address(vaultStd)), 0);
+    }
+
+    /// @dev F-11: accounting snapshot after emergency exit is clean.
+    function test_f11_emergencyExit_updatesAccounting() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _simulateYield(vaultStd, 20e18);
+        _warp(7 days);
+
+        uint256 tsBefore = vaultStd.lastHarvestTimestamp();
+
+        vm.prank(owner);
+        vaultStd.emergencyExitAave();
+
+        assertEq(vaultStd.lastTotalAssets(), vaultStd.totalAssets(), "lastTotalAssets must reflect post-exit state");
+        assertGt(vaultStd.lastHarvestTimestamp(), tsBefore, "lastHarvestTimestamp must be reset");
+    }
+
     /* ─────────────────────── depositWithPermit ──────────────────────── */
 
     uint256 constant PERMIT_USER_KEY = 0xA11CE;

@@ -419,6 +419,8 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     /// @notice Withdraw EURe. Always available, even when paused.
+    ///         Intentional design: users must be able to exit at all times per ERC-4626.
+    ///         pause() only blocks new deposits — it does not block withdrawals.
     function withdraw(
         uint256 assets,
         address receiver,
@@ -430,6 +432,8 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     /// @notice Redeem shares. Always available, even when paused.
+    ///         Intentional design: users must be able to exit at all times per ERC-4626.
+    ///         pause() only blocks new deposits — it does not block redemptions.
     function redeem(
         uint256 shares,
         address receiver,
@@ -555,19 +559,31 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /* ────────────────────────── EMERGENCY EXIT ──────────────────────── */
 
     /// @notice Pulls all aEURe out of AAVE back into the vault as idle EURe.
-    ///         Use when AAVE freezes or pauses the EURe market.
+    ///         Automatically pauses deposits if not already paused, so a concurrent
+    ///         deposit cannot immediately re-route funds back into AAVE.
     ///
     ///         Recommended sequence:
-    ///           1. guardian calls pause()       — blocks new deposits
-    ///           2. owner   calls emergencyExitAave() — withdraws all from AAVE
-    ///           3. users   call withdraw() / redeem() — served from idle balance
+    ///           1. owner calls emergencyExitAave() — pauses + withdraws atomically
+    ///           2. users call withdraw() / redeem() — served from idle balance
+    ///              withdraw() and redeem() intentionally omit whenNotPaused: users
+    ///              can always exit regardless of pause state. This is a deliberate
+    ///              ERC-4626 design trade-off; if the withdrawal path itself were
+    ///              compromised, the only mitigation would be a contract upgrade.
+    ///
+    ///         lastTotalAssets and lastHarvestTimestamp are reset to reflect the
+    ///         post-exit state. Any yield accrued since the last harvest is absorbed
+    ///         into the new baseline — this is an acceptable trade-off in an emergency
+    ///         to avoid an additional AAVE interaction that could fail if AAVE is degraded.
     ///
     ///         If AAVE is fully paused (not just frozen), this call will revert.
     ///         In that case there is no on-chain remedy until AAVE unpauses.
     function emergencyExitAave() external onlyOwner nonReentrant {
+        if (!paused()) _pause();
         uint256 aTokenBalance = IERC20(ATOKEN).balanceOf(address(this));
         if (aTokenBalance == 0) return;
         IAavePool(AAVE_POOL).withdraw(asset(), aTokenBalance, address(this));
+        lastTotalAssets = totalAssets();
+        lastHarvestTimestamp = block.timestamp;
         emit EmergencyExitAave(aTokenBalance, block.timestamp);
     }
 }
