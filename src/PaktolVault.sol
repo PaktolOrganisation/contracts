@@ -73,10 +73,12 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @notice AAVE aEURe token. Rebasing 1:1 with EURe + accrued interest.
     address public immutable ATOKEN;
 
+    /// @notice Maximum total assets the vault will accept. 0 = uncapped.
+    uint256 public immutable MAX_TVL;
+
     /// @notice Backend signer wallet. Authorizes deposits on restricted vaults.
-    ///         Mutable — owner can rotate via setSigner() if wallet is compromised.
     ///         Must be non-zero. Unused when REQUIRES_AUTH = false.
-    address public signer;
+    address public immutable SIGNER;
 
     /// @notice If true, deposit()/mint()/depositWithPermit() revert — only depositWithAuth() is accepted.
     ///         Set to true for the Paktol subscription vault (FEE_BPS = 0, CAP_BPS = 500).
@@ -111,7 +113,6 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     event Harvested(uint256 grossYield, uint256 toTreasury, uint256 toUsers, uint256 timestamp);
     event GuardianChanged(address indexed oldGuardian, address indexed newGuardian);
     event HarvesterChanged(address indexed oldHarvester, address indexed newHarvester);
-    event SignerChanged(address indexed oldSigner, address indexed newSigner);
     /// @param amount     Total aEURe pulled back to the vault (now idle).
     /// @param timestamp  Block timestamp of the emergency exit.
     event EmergencyExitAave(uint256 amount, uint256 timestamp);
@@ -124,6 +125,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     error NotGuardian();
     error NotHarvester();
     error DepositTooSmall(uint256 assets, uint256 minimum);
+    error TvlCapExceeded(uint256 current, uint256 cap);
     error InsufficientAllowance();
     error UseDepositWithAuth();
     error InvalidSignature();
@@ -131,53 +133,65 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ─────────────────────────── CONSTRUCTOR ───────────────────────── */
 
-    /// @notice Deployment parameters — grouped into a struct to avoid stack-too-deep.
-    struct VaultParams {
-        IERC20  asset;       /// EURe token address (Monerium, Gnosis Chain).
-        string  name;        /// Share token name.
-        string  symbol;      /// Share token symbol.
-        address owner;       /// Initial owner — multisig (Gnosis Safe) in production.
-        address treasury;    /// Receives fee + yield surplus. Cannot be address(0).
-        uint256 capBps;      /// Annual net yield cap in bps. Range: 1–10_000.
-        uint256 feeBps;      /// Fixed fee on gross yield in bps. 50 = Standard, 0 = Paktol.
-        address guardian;    /// Emergency pause address. Cannot be address(0).
-        address harvester;   /// Keeper bot allowed to call harvest(). Cannot be address(0).
-        address aavePool;    /// AAVE v3 Pool on Gnosis Chain. Cannot be address(0).
-        address aToken;      /// AAVE aEURe on Gnosis Chain. Cannot be address(0).
-        address signer;      /// Backend wallet that signs depositWithAuth authorizations. Cannot be address(0).
-        bool    requiresAuth; /// If true, only depositWithAuth() is accepted.
-    }
-
+    /// @param asset_      EURe token address (Monerium, Gnosis Chain).
+    /// @param name_       Share token name.
+    /// @param symbol_     Share token symbol.
+    /// @param owner_      Initial owner — multisig in production.
+    /// @param treasury_   Receives fee + yield surplus. Cannot be address(0).
+    /// @param capBps_     Annual net yield cap in bps. Range: 1–10_000.
+    /// @param feeBps_     Fixed fee on gross yield in bps. 50 = Standard, 0 = Paktol.
+    /// @param guardian_   Emergency pause address. Cannot be address(0).
+    /// @param harvester_  Keeper bot allowed to call harvest(). Cannot be address(0).
+    /// @param aavePool_     AAVE v3 Pool on Gnosis Chain. Cannot be address(0).
+    /// @param aToken_       AAVE aEURe on Gnosis Chain. Cannot be address(0).
+    /// @param maxTvl_       Maximum total assets. 0 = uncapped.
+    /// @param signer_       Backend wallet that signs depositWithAuth authorizations. Cannot be address(0).
+    /// @param requiresAuth_ If true, only depositWithAuth() is accepted — deposit/mint/depositWithPermit revert.
+    ///
     /// @dev DEPLOYMENT CHECKLIST — execute atomically after deploy:
     ///      1. Approve MIN_DEPOSIT EURe to this vault.
     ///      2. Call deposit(MIN_DEPOSIT, 0x000...dEaD) to seed dead shares (Standard vault only).
     ///         For restricted vaults, use depositWithAuth for the dead-share seed.
     constructor(
-        VaultParams memory p
-    ) ERC4626(p.asset) ERC20(p.name, p.symbol) Ownable(p.owner) {
-        if (address(p.asset) == address(0)) revert ZeroAddress();
-        if (p.treasury == address(0)) revert ZeroAddress();
-        if (p.guardian == address(0)) revert ZeroAddress();
-        if (p.harvester == address(0)) revert ZeroAddress();
-        if (p.aavePool == address(0)) revert ZeroAddress();
-        if (p.aToken == address(0)) revert ZeroAddress();
-        if (p.signer == address(0)) revert ZeroAddress();
-        if (p.capBps == 0 || p.capBps > BPS_DENOMINATOR) revert CapOutOfRange(p.capBps);
-        if (p.feeBps >= BPS_DENOMINATOR) revert FeeOutOfRange(p.feeBps);
+        IERC20 asset_,
+        string memory name_,
+        string memory symbol_,
+        address owner_,
+        address treasury_,
+        uint256 capBps_,
+        uint256 feeBps_,
+        address guardian_,
+        address harvester_,
+        address aavePool_,
+        address aToken_,
+        uint256 maxTvl_,
+        address signer_,
+        bool    requiresAuth_
+    ) ERC4626(asset_) ERC20(name_, symbol_) Ownable(owner_) {
+        if (address(asset_) == address(0)) revert ZeroAddress();
+        if (treasury_ == address(0)) revert ZeroAddress();
+        if (guardian_ == address(0)) revert ZeroAddress();
+        if (harvester_ == address(0)) revert ZeroAddress();
+        if (aavePool_ == address(0)) revert ZeroAddress();
+        if (aToken_ == address(0)) revert ZeroAddress();
+        if (signer_ == address(0)) revert ZeroAddress();
+        if (capBps_ == 0 || capBps_ > BPS_DENOMINATOR) revert CapOutOfRange(capBps_);
+        if (feeBps_ >= BPS_DENOMINATOR) revert FeeOutOfRange(feeBps_);
 
-        TREASURY = p.treasury;
-        CAP_BPS = p.capBps;
-        FEE_BPS = p.feeBps;
-        guardian = p.guardian;
-        harvester = p.harvester;
-        AAVE_POOL = p.aavePool;
-        ATOKEN = p.aToken;
-        signer = p.signer;
-        REQUIRES_AUTH = p.requiresAuth;
+        TREASURY = treasury_;
+        CAP_BPS = capBps_;
+        FEE_BPS = feeBps_;
+        guardian = guardian_;
+        harvester = harvester_;
+        AAVE_POOL = aavePool_;
+        ATOKEN = aToken_;
+        MAX_TVL = maxTvl_;
+        SIGNER = signer_;
+        REQUIRES_AUTH = requiresAuth_;
 
         DOMAIN_SEPARATOR = keccak256(abi.encode(
             keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256(bytes(p.name)),
+            keccak256(bytes(name_)),
             keccak256("1"),
             block.chainid,
             address(this)
@@ -196,18 +210,23 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ──────────────────────── ERC-4626 OVERRIDES ───────────────────── */
 
-    /// @notice Returns 0 when paused, type(uint256).max otherwise. TVL surveillance is backend-side.
+    /// @notice Returns 0 when paused or TVL cap is reached, per ERC-4626 spec.
     function maxDeposit(
         address
     ) public view override returns (uint256) {
-        return paused() ? 0 : type(uint256).max;
+        if (paused()) return 0;
+        if (MAX_TVL == 0) return type(uint256).max;
+        uint256 current = totalAssets();
+        return current >= MAX_TVL ? 0 : MAX_TVL - current;
     }
 
     /// @notice Derived from maxDeposit, per ERC-4626 spec.
     function maxMint(
         address receiver
     ) public view override returns (uint256) {
-        return maxDeposit(receiver);
+        uint256 maxDep = maxDeposit(receiver);
+        if (maxDep == type(uint256).max) return type(uint256).max;
+        return previewDeposit(maxDep);
     }
 
     /// @notice Maximum assets owner_ can withdraw, bounded by AAVE available liquidity.
@@ -291,6 +310,10 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address receiver
     ) internal returns (uint256) {
         if (assets < MIN_DEPOSIT) revert DepositTooSmall(assets, MIN_DEPOSIT);
+        uint256 current = totalAssets();
+        if (MAX_TVL != 0 && current + assets > MAX_TVL) {
+            revert TvlCapExceeded(current, MAX_TVL);
+        }
         uint256 shares = super.deposit(assets, receiver);
         _depositToAave();
         lastTotalAssets = totalAssets();
@@ -363,7 +386,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         ));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
 
-        if (ECDSA.recover(digest, sig) != signer) revert InvalidSignature();
+        if (ECDSA.recover(digest, sig) != SIGNER) revert InvalidSignature();
 
         return _executeDeposit(assets, receiver);
     }
@@ -376,6 +399,10 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (REQUIRES_AUTH) revert UseDepositWithAuth();
         uint256 assets = previewMint(shares);
         if (assets < MIN_DEPOSIT) revert DepositTooSmall(assets, MIN_DEPOSIT);
+        uint256 current = totalAssets();
+        if (MAX_TVL != 0 && current + assets > MAX_TVL) {
+            revert TvlCapExceeded(current, MAX_TVL);
+        }
         uint256 assetsUsed = super.mint(shares, receiver);
         _depositToAave();
         lastTotalAssets = totalAssets();
@@ -429,6 +456,14 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /// @notice Collects yield generated since last harvest and routes it per plan rules.
     ///         Callable by owner or harvester (keeper bot).
+    ///
+    ///         aumFee     = lastTotalAssets × FEE_BPS × elapsed / (BPS_DENOMINATOR × SECONDS_PER_YEAR)
+    ///         aumFee     = min(aumFee, grossYield)     [never touch principal]
+    ///         remaining  = grossYield − aumFee
+    ///         toUsers    = min(remaining, maxNetYield) [pro-rated annual cap]
+    ///         toTreasury = grossYield − toUsers        [aumFee + surplus above cap]
+    ///
+    ///         Treasury portion is withdrawn from AAVE and transferred directly.
     function harvest() external nonReentrant {
         if (msg.sender != owner() && msg.sender != harvester) revert NotHarvester();
 
@@ -487,16 +522,6 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (newGuardian_ == address(0)) revert ZeroAddress();
         emit GuardianChanged(guardian, newGuardian_);
         guardian = newGuardian_;
-    }
-
-    /// @notice Replaces the backend signer. Owner only.
-    ///         Use immediately if the signer wallet is compromised.
-    function setSigner(
-        address newSigner_
-    ) external onlyOwner {
-        if (newSigner_ == address(0)) revert ZeroAddress();
-        emit SignerChanged(signer, newSigner_);
-        signer = newSigner_;
     }
 
     /// @notice Replaces the harvester. Owner only.
