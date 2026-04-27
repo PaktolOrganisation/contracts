@@ -892,6 +892,26 @@ contract PaktolVaultTest is Test {
         vaultStd.withdraw(DEPOSIT, user2, user2);
     }
 
+    /// @dev Transfer of shares propagates the sender's depositTimestamp to the receiver.
+    ///      Without this, an attacker could bypass the cooldown by transferring shares
+    ///      to a fresh address that has no depositTimestamp.
+    function test_f09_cooldown_propagated_on_transfer() public {
+        uint256 shares = _deposit(vaultStd, user, DEPOSIT);
+
+        address attacker2 = makeAddr("attacker2");
+
+        // Transfer shares to fresh address — must inherit user's depositTimestamp.
+        vm.prank(user);
+        vaultStd.transfer(attacker2, shares);
+
+        assertEq(vaultStd.depositTimestamp(attacker2), vaultStd.depositTimestamp(user));
+
+        // attacker2 cannot withdraw immediately — cooldown inherited.
+        vm.expectRevert();
+        vm.prank(attacker2);
+        vaultStd.redeem(shares, attacker2, attacker2);
+    }
+
     /// @dev Cooldown is bypassed when vault is paused (emergency exit always possible).
     function test_f09_cooldown_bypassed_when_paused() public {
         uint256 shares = _deposit(vaultStd, user, DEPOSIT);

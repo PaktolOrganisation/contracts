@@ -466,6 +466,18 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         return assets;
     }
 
+    /// @dev Propagates depositTimestamp on share transfers to prevent cooldown bypass.
+    ///      Without this, an attacker could deposit, transfer shares to a fresh address,
+    ///      and that address would have no cooldown — bypassing the sandwich protection.
+    function _update(address from, address to, uint256 amount) internal override {
+        super._update(from, to, amount);
+        if (from != address(0) && to != address(0)) {
+            if (depositTimestamp[from] > depositTimestamp[to]) {
+                depositTimestamp[to] = depositTimestamp[from];
+            }
+        }
+    }
+
     /// @dev CEI-compliant internal hook called by withdraw() and redeem().
     ///      Shares are burned by OpenZeppelin BEFORE this hook executes,
     ///      so all state updates (Effects) precede external calls (Interactions).
