@@ -34,38 +34,21 @@ contract PaktolVaultTest is Test {
     uint256 constant DEPOSIT      = 1_000e18; // 1 000 EURe
     uint256 constant USER_BALANCE = 10_000e18;
 
-    /// @dev Returns base VaultParams — override individual fields as needed.
-    function _params(
-        string memory name_,
-        string memory symbol_,
-        uint256 capBps_,
-        uint256 feeBps_,
-        bool requiresAuth_
-    ) internal view returns (PaktolVault.VaultParams memory) {
-        return PaktolVault.VaultParams({
-            asset:       IERC20(address(eure)),
-            name:        name_,
-            symbol:      symbol_,
-            owner:       owner,
-            treasury:    treasury,
-            capBps:      capBps_,
-            feeBps:      feeBps_,
-            guardian:    guardian,
-            harvester:   harvester,
-            aavePool:    address(pool),
-            aToken:      address(pool.aToken()),
-            signer:      signerAddr,
-            requiresAuth: requiresAuth_
-        });
-    }
-
     function setUp() public {
         eure = new MockEURe();
         pool = new MockAavePool(address(eure));
         signerAddr = vm.addr(signerPk);
 
-        vaultStd = new PaktolVault(_params("Paktol Standard",      "pkEUR-S", CAP_STD, FEE_STD, false));
-        vaultPkt = new PaktolVault(_params("Paktol Subscription",  "pkEUR-P", CAP_PKT, FEE_PKT, true));
+        vaultStd = new PaktolVault(
+            IERC20(address(eure)), "Paktol Standard", "pkEUR-S", owner,
+            treasury, CAP_STD, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
+        vaultPkt = new PaktolVault(
+            IERC20(address(eure)), "Paktol Subscription", "pkEUR-P", owner,
+            treasury, CAP_PKT, FEE_PKT, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, true
+        );
 
         eure.mint(user, USER_BALANCE);
         eure.mint(user2, USER_BALANCE);
@@ -131,30 +114,51 @@ contract PaktolVaultTest is Test {
     ── */
 
     function helper_deployZeroAsset() external {
-        PaktolVault.VaultParams memory p = _params("x", "x", CAP_STD, FEE_STD, false);
-        p.asset = IERC20(address(0));
-        new PaktolVault(p);
+        new PaktolVault(
+            IERC20(address(0)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
     }
 
     function helper_deployZeroTreasury() external {
-        PaktolVault.VaultParams memory p = _params("x", "x", CAP_STD, FEE_STD, false);
-        p.treasury = address(0);
-        new PaktolVault(p);
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            address(0), CAP_STD, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
     }
 
     function helper_deployCapZero() external {
-        PaktolVault.VaultParams memory p = _params("x", "x", 0, FEE_STD, false);
-        new PaktolVault(p);
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, 0, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
     }
 
     function helper_deployCapAboveMax() external {
-        PaktolVault.VaultParams memory p = _params("x", "x", 10_001, FEE_STD, false);
-        new PaktolVault(p);
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, 10_001, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
     }
 
     function helper_deployFee100pct() external {
-        PaktolVault.VaultParams memory p = _params("x", "x", CAP_STD, 10_000, false);
-        new PaktolVault(p);
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, 10_000, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
+    }
+
+    function helper_deployATokenMismatch(address wrongAToken_) external {
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, guardian, harvester,
+            address(pool), wrongAToken_, 0, signerAddr, false
+        );
     }
 
     /* ─────────────────────── CONSTRUCTOR ────────────────────────────── */
@@ -167,10 +171,10 @@ contract PaktolVaultTest is Test {
         assertEq(vaultStd.ATOKEN(), address(pool.aToken()));
         assertEq(vaultStd.guardian(), guardian);
         assertEq(vaultStd.harvester(), harvester);
-        assertEq(vaultStd.signer(), signerAddr);
+        assertEq(vaultStd.SIGNER(), signerAddr);
         assertFalse(vaultStd.REQUIRES_AUTH());
 
-        assertEq(vaultPkt.signer(), signerAddr);
+        assertEq(vaultPkt.SIGNER(), signerAddr);
         assertTrue(vaultPkt.REQUIRES_AUTH());
     }
 
@@ -197,6 +201,17 @@ contract PaktolVaultTest is Test {
     function test_constructor_revert_fee100pct() public {
         vm.expectRevert(abi.encodeWithSelector(PaktolVault.FeeOutOfRange.selector, 10_000));
         this.helper_deployFee100pct();
+    }
+
+    function test_constructor_revert_aTokenMismatch() public {
+        MockAavePool wrongPool = new MockAavePool(address(eure));
+        address wrongAToken = address(wrongPool.aToken());
+        vm.expectRevert(abi.encodeWithSelector(
+            PaktolVault.ATokenMismatch.selector,
+            wrongAToken,
+            address(pool.aToken())
+        ));
+        this.helper_deployATokenMismatch(wrongAToken);
     }
 
     /* ─────────────────────── DEPOSIT ────────────────────────────────── */
@@ -572,60 +587,6 @@ contract PaktolVaultTest is Test {
         vm.expectRevert();
         vm.prank(user);
         vaultStd.setHarvester(makeAddr("x"));
-    }
-
-    /* ─────────────────────── SIGNER ROTATION ───────────────────────── */
-
-    function test_setSigner_updatesAddress() public {
-        address newSigner = makeAddr("newSigner");
-        vm.prank(owner);
-        vaultPkt.setSigner(newSigner);
-        assertEq(vaultPkt.signer(), newSigner);
-    }
-
-    function test_setSigner_emitsEvent() public {
-        address newSigner = makeAddr("newSigner");
-        vm.expectEmit(true, true, false, false);
-        emit PaktolVault.SignerChanged(signerAddr, newSigner);
-        vm.prank(owner);
-        vaultPkt.setSigner(newSigner);
-    }
-
-    function test_setSigner_revert_zeroAddress() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
-        vm.prank(owner);
-        vaultPkt.setSigner(address(0));
-    }
-
-    function test_setSigner_revert_unauthorized() public {
-        vm.expectRevert();
-        vm.prank(user);
-        vaultPkt.setSigner(makeAddr("x"));
-    }
-
-    function test_setSigner_oldSignatureInvalidAfterRotation() public {
-        // Sign with current signer
-        uint256 deadline = block.timestamp + 1 hours;
-        bytes32 structHash = keccak256(abi.encode(
-            vaultPkt.DEPOSIT_AUTH_TYPEHASH(),
-            user, DEPOSIT, user, deadline,
-            vaultPkt.nonces(user)
-        ));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", vaultPkt.DOMAIN_SEPARATOR(), structHash));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
-        bytes memory sig = abi.encodePacked(r, s, v);
-
-        // Rotate signer to a new address
-        vm.prank(owner);
-        vaultPkt.setSigner(makeAddr("newBackend"));
-
-        // Old signature now invalid
-        eure.mint(user, DEPOSIT);
-        vm.startPrank(user);
-        eure.approve(address(vaultPkt), DEPOSIT);
-        vm.expectRevert(PaktolVault.InvalidSignature.selector);
-        vaultPkt.depositWithAuth(DEPOSIT, user, deadline, sig);
-        vm.stopPrank();
     }
 
     function test_maxDeposit_returnsZero_whenPaused() public {

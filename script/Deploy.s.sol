@@ -51,21 +51,11 @@ contract Deploy is Script {
         vm.startBroadcast(deployerKey);
 
         // ── Step 1: Deploy vault ──────────────────────────────────────────
-        PaktolVault vault = new PaktolVault(PaktolVault.VaultParams({
-            asset:        IERC20(asset),
-            name:         name,
-            symbol:       symbol,
-            owner:        owner,
-            treasury:     treasury,
-            capBps:       capBps,
-            feeBps:       feeBps,
-            guardian:     guardian,
-            harvester:    harvester,
-            aavePool:     aavePool,
-            aToken:       aToken,
-            signer:       signer,
-            requiresAuth: requiresAuth
-        }));
+        PaktolVault vault = new PaktolVault(
+            IERC20(asset), name, symbol, owner,
+            treasury, capBps, feeBps, guardian, harvester,
+            aavePool, aToken, 0, signer, requiresAuth
+        );
 
         console.log("PaktolVault deployed at:", address(vault));
 

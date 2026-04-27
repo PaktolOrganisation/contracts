@@ -49,21 +49,11 @@ contract PaktolVaultForkTest is Test {
 
         vm.createSelectFork(rpc);
 
-        vault = new PaktolVault(PaktolVault.VaultParams({
-            asset:        IERC20(EURE),
-            name:         "Paktol EUR",
-            symbol:       "pkEUR",
-            owner:        owner,
-            treasury:     treasury,
-            capBps:       350,
-            feeBps:       50,
-            guardian:     guardian,
-            harvester:    harvester,
-            aavePool:     AAVE_POOL,
-            aToken:       ATOKEN,
-            signer:       makeAddr("signer"),
-            requiresAuth: false
-        }));
+        vault = new PaktolVault(
+            IERC20(EURE), "Paktol EUR", "pkEUR", owner,
+            treasury, 350, 50, guardian, harvester,
+            AAVE_POOL, ATOKEN, 0, makeAddr("signer"), false
+        );
     }
 
     /* ─────────────────── EURe FUNDING HELPER ───────────────────── */
@@ -209,6 +199,23 @@ contract PaktolVaultForkTest is Test {
         assertEq(IERC20(ATOKEN).balanceOf(address(vault)), 0, "still no aEURe after redeem");
     }
 
+    /* ────────────────── CONSTRUCTOR VALIDATION (fork) ──────────────── */
+
+    /// @dev Passes a wrong aToken — real Aave returns correct one → mismatch → revert.
+    function test_fork_constructor_rejectsWrongAToken() public {
+        address wrongAToken = makeAddr("wrongAToken");
+        vm.expectRevert(abi.encodeWithSelector(
+            PaktolVault.ATokenMismatch.selector,
+            wrongAToken,
+            ATOKEN
+        ));
+        new PaktolVault(
+            IERC20(EURE), "x", "x", owner,
+            treasury, 350, 50, guardian, harvester,
+            AAVE_POOL, wrongAToken, 0, makeAddr("signer"), false
+        );
+    }
+
     /* ────────────────────── DEPLOY SCRIPT (fork) ────────────────────── */
 
     /// @dev Mirrors Deploy.s.sol: deploy vault + seed dead shares atomically.
@@ -221,21 +228,11 @@ contract PaktolVaultForkTest is Test {
 
         // Deploy a fresh vault (same params as production Standard instance).
         vm.startPrank(deployer);
-        PaktolVault freshVault = new PaktolVault(PaktolVault.VaultParams({
-            asset:        IERC20(EURE),
-            name:         "Paktol EUR",
-            symbol:       "pkEUR",
-            owner:        owner,
-            treasury:     treasury,
-            capBps:       350,
-            feeBps:       50,
-            guardian:     guardian,
-            harvester:    harvester,
-            aavePool:     AAVE_POOL,
-            aToken:       ATOKEN,
-            signer:       makeAddr("signer"),
-            requiresAuth: false
-        }));
+        PaktolVault freshVault = new PaktolVault(
+            IERC20(EURE), "Paktol EUR", "pkEUR", owner,
+            treasury, 350, 50, guardian, harvester,
+            AAVE_POOL, ATOKEN, 0, makeAddr("signer"), false
+        );
 
         // Seed dead shares — must happen before any real user deposit.
         IERC20(EURE).approve(address(freshVault), seedAmount);
