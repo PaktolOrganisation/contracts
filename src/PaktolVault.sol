@@ -231,7 +231,15 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ──────────────────────── ERC-4626 OVERRIDES ───────────────────── */
 
+    /// @dev aEURe rebases continuously with AAVE interest. Between a preview call and actual execution,
+    ///      the aEURe balance may change by a few wei per AAVE epoch. Implications:
+    ///        • previewDeposit / previewMint: may return slightly fewer shares than actually minted.
+    ///        • previewWithdraw / previewRedeem: may return slightly more assets than actually received.
+    ///      Use withdrawSafe() / redeemSafe() from the frontend for slippage protection.
+
     /// @notice Returns 0 when paused or TVL cap is reached, per ERC-4626 spec.
+    ///         Returns type(uint256).max when MAX_TVL == 0 (uncapped vault).
+    ///         Integrators should treat type(uint256).max as "no practical limit", not as a literal amount.
     function maxDeposit(
         address
     ) public view override returns (uint256) {
@@ -486,6 +494,10 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @notice Redeem shares. Always available, even when paused.
     ///         Intentional design: users must be able to exit at all times per ERC-4626.
     ///         pause() only blocks new deposits — it does not block redemptions.
+    /// @dev    assets is computed as previewRedeem(shares) before _withdrawFromAave executes.
+    ///         If aEURe rebases in the same block between computation and withdrawal, the vault
+    ///         may attempt to pull 1 wei more than available from AAVE — causing a revert.
+    ///         This is a known ERC-4626 edge case; use slippage-protected wrappers on the frontend.
     function redeem(
         uint256 shares,
         address receiver,
