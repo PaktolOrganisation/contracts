@@ -123,7 +123,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ───────────────────────────── ERRORS ──────────────────────────── */
 
-    error ZeroAddress();
+    error ZeroAddress(string param);
     error ATokenMismatch(address provided, address expected);
     error CapOutOfRange(uint256 provided);
     error FeeOutOfRange(uint256 provided);
@@ -174,13 +174,13 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address signer_,
         bool    requiresAuth_
     ) ERC4626(asset_) ERC20(name_, symbol_) Ownable(owner_) {
-        if (address(asset_) == address(0)) revert ZeroAddress();
-        if (treasury_ == address(0)) revert ZeroAddress();
-        if (guardian_ == address(0)) revert ZeroAddress();
-        if (harvester_ == address(0)) revert ZeroAddress();
-        if (aavePool_ == address(0)) revert ZeroAddress();
-        if (aToken_ == address(0)) revert ZeroAddress();
-        if (signer_ == address(0)) revert ZeroAddress();
+        if (address(asset_) == address(0)) revert ZeroAddress("asset");
+        if (treasury_ == address(0)) revert ZeroAddress("treasury");
+        if (guardian_ == address(0)) revert ZeroAddress("guardian");
+        if (harvester_ == address(0)) revert ZeroAddress("harvester");
+        if (aavePool_ == address(0)) revert ZeroAddress("aavePool");
+        if (aToken_ == address(0)) revert ZeroAddress("aToken");
+        if (signer_ == address(0)) revert ZeroAddress("signer");
         if (capBps_ == 0 || capBps_ > BPS_DENOMINATOR) revert CapOutOfRange(capBps_);
         if (feeBps_ >= BPS_DENOMINATOR) revert FeeOutOfRange(feeBps_);
 
@@ -525,7 +525,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     function setGuardian(
         address newGuardian_
     ) external onlyOwner {
-        if (newGuardian_ == address(0)) revert ZeroAddress();
+        if (newGuardian_ == address(0)) revert ZeroAddress("newGuardian");
         emit GuardianChanged(guardian, newGuardian_);
         guardian = newGuardian_;
     }
@@ -534,7 +534,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     function setHarvester(
         address newHarvester_
     ) external onlyOwner {
-        if (newHarvester_ == address(0)) revert ZeroAddress();
+        if (newHarvester_ == address(0)) revert ZeroAddress("newHarvester");
         emit HarvesterChanged(harvester, newHarvester_);
         harvester = newHarvester_;
     }
