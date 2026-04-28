@@ -153,6 +153,14 @@ contract PaktolVaultTest is Test {
         );
     }
 
+    function helper_deployFeeAboveFloor() external {
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, 201, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
+    }
+
     function helper_deployATokenMismatch(address wrongAToken_) external {
         new PaktolVault(
             IERC20(address(eure)), "x", "x", owner,
@@ -201,6 +209,21 @@ contract PaktolVaultTest is Test {
     function test_constructor_revert_fee100pct() public {
         vm.expectRevert(abi.encodeWithSelector(PaktolVault.FeeOutOfRange.selector, 10_000));
         this.helper_deployFee100pct();
+    }
+
+    // F-21: FEE_BPS > FLOOR_BPS causes harvest() DoS — tighten constructor bound.
+    function test_f21_constructor_revert_fee_above_floor_bps() public {
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.FeeOutOfRange.selector, 201));
+        this.helper_deployFeeAboveFloor();
+    }
+
+    function test_f21_constructor_accepts_fee_at_floor_bps() public {
+        PaktolVault v = new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, 200, guardian, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
+        assertEq(v.FEE_BPS(), 200);
     }
 
     function test_constructor_revert_aTokenMismatch() public {
