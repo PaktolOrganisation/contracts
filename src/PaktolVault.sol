@@ -603,9 +603,10 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     ///         If AAVE is fully paused (not just frozen), this call will revert.
     ///         In that case there is no on-chain remedy until AAVE unpauses.
     function emergencyExitAave() external onlyOwner nonReentrant {
-        uint256 aTokenBalance = IERC20(ATOKEN).balanceOf(address(this));
-        if (aTokenBalance == 0) return;
-        IAavePool(AAVE_POOL).withdraw(asset(), aTokenBalance, address(this));
-        emit EmergencyExitAave(aTokenBalance, block.timestamp);
+        if (IERC20(ATOKEN).balanceOf(address(this)) == 0) return;
+        // type(uint256).max lets Aave resolve the live balance server-side,
+        // removing the 1-wei race condition caused by the rebasing aToken.
+        uint256 withdrawn = IAavePool(AAVE_POOL).withdraw(asset(), type(uint256).max, address(this));
+        emit EmergencyExitAave(withdrawn, block.timestamp);
     }
 }
