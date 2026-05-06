@@ -650,6 +650,65 @@ contract PaktolVaultTest is Test {
         assertApproxEqAbs(vaultStd.convertToAssets(shares2), DEPOSIT, 1e9);
     }
 
+    /* ─────────────── F-18: lastTotalAssets accounting invariant ─────── */
+
+    /// @dev Proves that a deposit between yield accrual and harvest does NOT
+    ///      absorb the pending yield into lastTotalAssets (old bug: always wrote
+    ///      totalAssets() after deposit, which erased the accrued gap).
+    ///
+    ///      Timeline:
+    ///        t0  user deposits 1 000 EURe → lastTotalAssets = 1 000
+    ///        t1  AAVE accrues 50 EURe     → totalAssets = 1 050, lastTotalAssets = 1 000
+    ///        t2  user2 deposits 200 EURe  → lastTotalAssets must stay 1 200 (not 1 250)
+    ///        t3  harvest sees grossYield = 50 EURe → treasury receives correct share
+    function test_f18_deposit_does_not_absorb_pending_yield() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        assertEq(vaultStd.lastTotalAssets(), DEPOSIT);
+
+        uint256 yieldAmount = 50e18;
+        _simulateYield(vaultStd, yieldAmount);
+        // totalAssets = 1050, but lastTotalAssets must still be 1000
+
+        uint256 deposit2 = 200e18;
+        eure.mint(user2, deposit2);
+        _deposit(vaultStd, user2, deposit2);
+
+        // Fix: lastTotalAssets = 1000 + 200 = 1200 (yield gap preserved)
+        // Bug: lastTotalAssets = totalAssets() = 1250 (yield absorbed)
+        assertEq(vaultStd.lastTotalAssets(), DEPOSIT + deposit2, "deposit must not absorb pending yield");
+
+        _warp(365 days);
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        // grossYield = 1250 - 1200 = 50 EURe → treasury receives non-zero
+        // (bug: grossYield = 1250 - 1250 = 0 → treasury gets nothing)
+        assertGt(eure.balanceOf(treasury), 0, "treasury must receive yield from pre-deposit accumulation");
+    }
+
+    /// @dev Proves that a partial withdrawal does NOT absorb pending yield.
+    function test_f18_withdraw_does_not_absorb_pending_yield() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _deposit(vaultStd, user2, DEPOSIT);
+
+        uint256 yieldAmount = 50e18;
+        _simulateYield(vaultStd, yieldAmount);
+
+        uint256 withdrawAmount = 200e18;
+        vm.prank(user);
+        vaultStd.withdraw(withdrawAmount, user, user);
+
+        // Fix: lastTotalAssets = 2000 - 200 = 1800 (yield gap preserved)
+        // Bug: lastTotalAssets = totalAssets() = 1850 (yield absorbed)
+        assertEq(vaultStd.lastTotalAssets(), 2 * DEPOSIT - withdrawAmount, "withdraw must not absorb pending yield");
+
+        _warp(365 days);
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        assertGt(eure.balanceOf(treasury), 0, "treasury must receive yield from pre-withdrawal accumulation");
+    }
+
     /* ─────────────────────── FUZZ ───────────────────────────────────── */
 
     function testFuzz_deposit_withdraw_roundtrip(

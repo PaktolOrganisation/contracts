@@ -312,6 +312,18 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ──────────────────────── DEPOSIT / WITHDRAW ───────────────────── */
 
+    /// @dev Updates lastTotalAssets by a signed delta instead of re-reading totalAssets().
+    ///      Preserves accumulated yield that has already been computed by harvest()
+    ///      and must not be overwritten by a subsequent deposit or withdrawal.
+    function _syncLastTotalAssets(int256 delta) internal {
+        if (delta >= 0) {
+            lastTotalAssets += uint256(delta);
+        } else {
+            uint256 decrease = uint256(-delta);
+            lastTotalAssets = lastTotalAssets > decrease ? lastTotalAssets - decrease : 0;
+        }
+    }
+
     /// @dev Shared deposit logic — called by deposit() and depositWithPermit().
     ///      Assumes caller holds nonReentrant lock and whenNotPaused check has passed.
     function _executeDeposit(
@@ -325,7 +337,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         }
         uint256 shares = super.deposit(assets, receiver);
         _depositToAave();
-        lastTotalAssets = totalAssets();
+        _syncLastTotalAssets(int256(assets));
         return shares;
     }
 
@@ -414,7 +426,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         }
         uint256 assetsUsed = super.mint(shares, receiver);
         _depositToAave();
-        lastTotalAssets = totalAssets();
+        _syncLastTotalAssets(int256(assetsUsed));
         return assetsUsed;
     }
 
@@ -425,7 +437,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address owner_
     ) public override nonReentrant returns (uint256) {
         uint256 shares = super.withdraw(assets, receiver, owner_);
-        lastTotalAssets = totalAssets();
+        _syncLastTotalAssets(-int256(assets));
         return shares;
     }
 
@@ -436,7 +448,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address owner_
     ) public override nonReentrant returns (uint256) {
         uint256 assets = super.redeem(shares, receiver, owner_);
-        lastTotalAssets = totalAssets();
+        _syncLastTotalAssets(-int256(assets));
         return assets;
     }
 
