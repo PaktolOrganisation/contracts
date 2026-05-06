@@ -187,12 +187,12 @@ contract PaktolVaultTest is Test {
     }
 
     function test_constructor_revert_zeroAsset() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.ZeroAddress.selector, "asset"));
         this.helper_deployZeroAsset();
     }
 
     function test_constructor_revert_zeroTreasury() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.ZeroAddress.selector, "treasury"));
         this.helper_deployZeroTreasury();
     }
 
@@ -529,6 +529,7 @@ contract PaktolVaultTest is Test {
     function test_harvest_updatesTimestamp() public {
         _deposit(vaultStd, user, DEPOSIT);
         _warp(7 days);
+        _simulateYield(vaultStd, 10e18);
 
         uint256 before = vaultStd.lastHarvestTimestamp();
 
@@ -536,6 +537,37 @@ contract PaktolVaultTest is Test {
         vaultStd.harvest();
 
         assertGt(vaultStd.lastHarvestTimestamp(), before);
+    }
+
+    /// @dev F-20: no-yield harvest must NOT advance lastHarvestTimestamp.
+    ///      A malicious harvester calling during zero-yield periods would compress
+    ///      the elapsed window on the next profitable harvest, capping users' yield.
+    function test_f20_noYield_harvest_preserves_timestamp() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(7 days);
+
+        uint256 tsBefore = vaultStd.lastHarvestTimestamp();
+
+        // No yield simulated — no-yield branch taken.
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        assertEq(vaultStd.lastHarvestTimestamp(), tsBefore, "timestamp must not advance on no-yield harvest");
+
+        // Real yield accrues later — full elapsed window is preserved.
+        _warp(30 days);
+        _simulateYield(vaultStd, 35e18);
+
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        // maxNetYield = lastTotalAssets × 3.5% × 37days / 365days
+        // With fix: elapsed = 37 days from tsBefore → full cap applied
+        // Without fix: elapsed = 30 days (compressed by no-yield harvest) → smaller cap
+        uint256 elapsed = 37 days;
+        uint256 maxNetYield = (DEPOSIT * 350 * elapsed) / (10_000 * 365 days);
+        assertApproxEqAbs(vaultStd.totalAssets(), DEPOSIT + 35e18 - eure.balanceOf(treasury), 1e9);
+        assertGe(vaultStd.totalAssets(), DEPOSIT + maxNetYield - 1e9, "full cap window must be applied");
     }
 
     /* ─────────────────────── PAUSE / GUARDIAN ───────────────────────── */
@@ -587,7 +619,7 @@ contract PaktolVaultTest is Test {
     }
 
     function test_setGuardian_revert_zeroAddress() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.ZeroAddress.selector, "newGuardian"));
         vm.prank(owner);
         vaultStd.setGuardian(address(0));
     }
@@ -606,7 +638,7 @@ contract PaktolVaultTest is Test {
     }
 
     function test_setHarvester_revert_zeroAddress() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.ZeroAddress.selector, "newHarvester"));
         vm.prank(owner);
         vaultStd.setHarvester(address(0));
     }
@@ -674,6 +706,65 @@ contract PaktolVaultTest is Test {
         // user2 deposits at the new share price — only gets their deposit back.
         uint256 shares2 = _deposit(vaultStd, user2, DEPOSIT);
         assertApproxEqAbs(vaultStd.convertToAssets(shares2), DEPOSIT, 1e9);
+    }
+
+    /* ─────────────── F-18: lastTotalAssets accounting invariant ─────── */
+
+    /// @dev Proves that a deposit between yield accrual and harvest does NOT
+    ///      absorb the pending yield into lastTotalAssets (old bug: always wrote
+    ///      totalAssets() after deposit, which erased the accrued gap).
+    ///
+    ///      Timeline:
+    ///        t0  user deposits 1 000 EURe → lastTotalAssets = 1 000
+    ///        t1  AAVE accrues 50 EURe     → totalAssets = 1 050, lastTotalAssets = 1 000
+    ///        t2  user2 deposits 200 EURe  → lastTotalAssets must stay 1 200 (not 1 250)
+    ///        t3  harvest sees grossYield = 50 EURe → treasury receives correct share
+    function test_f18_deposit_does_not_absorb_pending_yield() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        assertEq(vaultStd.lastTotalAssets(), DEPOSIT);
+
+        uint256 yieldAmount = 50e18;
+        _simulateYield(vaultStd, yieldAmount);
+        // totalAssets = 1050, but lastTotalAssets must still be 1000
+
+        uint256 deposit2 = 200e18;
+        eure.mint(user2, deposit2);
+        _deposit(vaultStd, user2, deposit2);
+
+        // Fix: lastTotalAssets = 1000 + 200 = 1200 (yield gap preserved)
+        // Bug: lastTotalAssets = totalAssets() = 1250 (yield absorbed)
+        assertEq(vaultStd.lastTotalAssets(), DEPOSIT + deposit2, "deposit must not absorb pending yield");
+
+        _warp(365 days);
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        // grossYield = 1250 - 1200 = 50 EURe → treasury receives non-zero
+        // (bug: grossYield = 1250 - 1250 = 0 → treasury gets nothing)
+        assertGt(eure.balanceOf(treasury), 0, "treasury must receive yield from pre-deposit accumulation");
+    }
+
+    /// @dev Proves that a partial withdrawal does NOT absorb pending yield.
+    function test_f18_withdraw_does_not_absorb_pending_yield() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _deposit(vaultStd, user2, DEPOSIT);
+
+        uint256 yieldAmount = 50e18;
+        _simulateYield(vaultStd, yieldAmount);
+
+        uint256 withdrawAmount = 200e18;
+        vm.prank(user);
+        vaultStd.withdraw(withdrawAmount, user, user);
+
+        // Fix: lastTotalAssets = 2000 - 200 = 1800 (yield gap preserved)
+        // Bug: lastTotalAssets = totalAssets() = 1850 (yield absorbed)
+        assertEq(vaultStd.lastTotalAssets(), 2 * DEPOSIT - withdrawAmount, "withdraw must not absorb pending yield");
+
+        _warp(365 days);
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        assertGt(eure.balanceOf(treasury), 0, "treasury must receive yield from pre-withdrawal accumulation");
     }
 
     /* ─────────────────────── FUZZ ───────────────────────────────────── */
@@ -960,6 +1051,55 @@ contract PaktolVaultTest is Test {
 
         assertGt(vaultStd.maxWithdraw(user), 0, "maxWithdraw must be non-zero after cooldown");
         assertGt(vaultStd.maxRedeem(user), 0, "maxRedeem must be non-zero after cooldown");
+    }
+
+    /// @dev F-11: emergencyExitAave() must pause atomically so a concurrent deposit
+    ///      cannot immediately re-route idle EURe back into AAVE.
+    function test_f11_emergencyExit_autopause() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        assertFalse(vaultStd.paused(), "vault starts unpaused");
+
+        vm.prank(owner);
+        vaultStd.emergencyExitAave();
+
+        assertTrue(vaultStd.paused(), "vault must be paused after emergency exit");
+
+        // Deposit must be blocked — funds cannot re-enter AAVE.
+        vm.startPrank(user);
+        eure.approve(address(vaultStd), DEPOSIT);
+        vm.expectRevert();
+        vaultStd.deposit(DEPOSIT, user);
+        vm.stopPrank();
+    }
+
+    /// @dev F-11: emergencyExitAave() on an already-paused vault must not revert.
+    function test_f11_emergencyExit_alreadyPaused_noRevert() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        vm.prank(guardian);
+        vaultStd.pause();
+
+        // Must not revert even though vault is already paused.
+        vm.prank(owner);
+        vaultStd.emergencyExitAave();
+
+        assertTrue(vaultStd.paused());
+        assertEq(IERC20(vaultStd.ATOKEN()).balanceOf(address(vaultStd)), 0);
+    }
+
+    /// @dev F-11: accounting snapshot after emergency exit is clean.
+    function test_f11_emergencyExit_updatesAccounting() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _simulateYield(vaultStd, 20e18);
+        _warp(7 days);
+
+        uint256 tsBefore = vaultStd.lastHarvestTimestamp();
+
+        vm.prank(owner);
+        vaultStd.emergencyExitAave();
+
+        assertEq(vaultStd.lastTotalAssets(), vaultStd.totalAssets(), "lastTotalAssets must reflect post-exit state");
+        assertGt(vaultStd.lastHarvestTimestamp(), tsBefore, "lastHarvestTimestamp must be reset");
     }
 
     /* ─────────────────────── depositWithPermit ──────────────────────── */
