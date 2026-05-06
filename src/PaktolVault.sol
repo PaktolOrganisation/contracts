@@ -132,7 +132,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ───────────────────────────── ERRORS ──────────────────────────── */
 
-    error ZeroAddress();
+    error ZeroAddress(string param);
     error ATokenMismatch(address provided, address expected);
     error CapOutOfRange(uint256 provided);
     error FeeOutOfRange(uint256 provided);
@@ -184,13 +184,13 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address signer_,
         bool    requiresAuth_
     ) ERC4626(asset_) ERC20(name_, symbol_) Ownable(owner_) {
-        if (address(asset_) == address(0)) revert ZeroAddress();
-        if (treasury_ == address(0)) revert ZeroAddress();
-        if (guardian_ == address(0)) revert ZeroAddress();
-        if (harvester_ == address(0)) revert ZeroAddress();
-        if (aavePool_ == address(0)) revert ZeroAddress();
-        if (aToken_ == address(0)) revert ZeroAddress();
-        if (signer_ == address(0)) revert ZeroAddress();
+        if (address(asset_) == address(0)) revert ZeroAddress("asset");
+        if (treasury_ == address(0)) revert ZeroAddress("treasury");
+        if (guardian_ == address(0)) revert ZeroAddress("guardian");
+        if (harvester_ == address(0)) revert ZeroAddress("harvester");
+        if (aavePool_ == address(0)) revert ZeroAddress("aavePool");
+        if (aToken_ == address(0)) revert ZeroAddress("aToken");
+        if (signer_ == address(0)) revert ZeroAddress("signer");
         if (capBps_ == 0 || capBps_ > BPS_DENOMINATOR) revert CapOutOfRange(capBps_);
         if (feeBps_ >= BPS_DENOMINATOR) revert FeeOutOfRange(feeBps_);
 
@@ -326,6 +326,18 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ──────────────────────── DEPOSIT / WITHDRAW ───────────────────── */
 
+    /// @dev Updates lastTotalAssets by a signed delta instead of re-reading totalAssets().
+    ///      Preserves accumulated yield that has already been computed by harvest()
+    ///      and must not be overwritten by a subsequent deposit or withdrawal.
+    function _syncLastTotalAssets(int256 delta) internal {
+        if (delta >= 0) {
+            lastTotalAssets += uint256(delta);
+        } else {
+            uint256 decrease = uint256(-delta);
+            lastTotalAssets = lastTotalAssets > decrease ? lastTotalAssets - decrease : 0;
+        }
+    }
+
     /// @dev Shared deposit logic — called by deposit() and depositWithPermit().
     ///      Assumes caller holds nonReentrant lock and whenNotPaused check has passed.
     function _executeDeposit(
@@ -339,7 +351,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         }
         uint256 shares = super.deposit(assets, receiver);
         _depositToAave();
-        lastTotalAssets = totalAssets();
+        _syncLastTotalAssets(int256(assets));
         depositTimestamp[receiver] = block.timestamp;
         return shares;
     }
@@ -429,7 +441,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         }
         uint256 assetsUsed = super.mint(shares, receiver);
         _depositToAave();
-        lastTotalAssets = totalAssets();
+        _syncLastTotalAssets(int256(assetsUsed));
         depositTimestamp[receiver] = block.timestamp;
         return assetsUsed;
     }
@@ -446,7 +458,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
             revert WithdrawalCooldown(depositTimestamp[owner_] + WITHDRAWAL_COOLDOWN);
         }
         uint256 shares = super.withdraw(assets, receiver, owner_);
-        lastTotalAssets = totalAssets();
+        _syncLastTotalAssets(-int256(assets));
         return shares;
     }
 
@@ -462,7 +474,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
             revert WithdrawalCooldown(depositTimestamp[owner_] + WITHDRAWAL_COOLDOWN);
         }
         uint256 assets = super.redeem(shares, receiver, owner_);
-        lastTotalAssets = totalAssets();
+        _syncLastTotalAssets(-int256(assets));
         return assets;
     }
 
@@ -519,10 +531,11 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
         uint256 current = totalAssets();
 
-        // No yield or loss — reset snapshot and exit cleanly.
+        // No yield or loss — update snapshot but preserve timestamp.
+        // Advancing the timestamp here would shrink the elapsed window on the next
+        // profitable harvest, compressing maxNetYield and redirecting yield to treasury.
         if (current <= lastTotalAssets) {
             lastTotalAssets = current;
-            lastHarvestTimestamp = block.timestamp;
             return;
         }
 
@@ -563,7 +576,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     function setGuardian(
         address newGuardian_
     ) external onlyOwner {
-        if (newGuardian_ == address(0)) revert ZeroAddress();
+        if (newGuardian_ == address(0)) revert ZeroAddress("newGuardian");
         emit GuardianChanged(guardian, newGuardian_);
         guardian = newGuardian_;
     }
@@ -572,7 +585,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     function setHarvester(
         address newHarvester_
     ) external onlyOwner {
-        if (newHarvester_ == address(0)) revert ZeroAddress();
+        if (newHarvester_ == address(0)) revert ZeroAddress("newHarvester");
         emit HarvesterChanged(harvester, newHarvester_);
         harvester = newHarvester_;
     }
@@ -593,20 +606,33 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /* ────────────────────────── EMERGENCY EXIT ──────────────────────── */
 
     /// @notice Pulls all aEURe out of AAVE back into the vault as idle EURe.
-    ///         Use when AAVE freezes or pauses the EURe market.
+    ///         Automatically pauses deposits if not already paused, so a concurrent
+    ///         deposit cannot immediately re-route funds back into AAVE.
     ///
     ///         Recommended sequence:
-    ///           1. guardian calls pause()       — blocks new deposits
-    ///           2. owner   calls emergencyExitAave() — withdraws all from AAVE
-    ///           3. users   call withdraw() / redeem() — served from idle balance
+    ///           1. owner calls emergencyExitAave() — pauses + withdraws atomically
+    ///           2. users call withdraw() / redeem() — served from idle balance
+    ///              withdraw() and redeem() intentionally omit whenNotPaused: users
+    ///              can always exit regardless of pause state. This is a deliberate
+    ///              ERC-4626 design trade-off; if the withdrawal path itself were
+    ///              compromised, the only mitigation would be a contract upgrade.
+    ///
+    ///         lastTotalAssets and lastHarvestTimestamp are reset to reflect the
+    ///         post-exit state. Any yield accrued since the last harvest is absorbed
+    ///         into the new baseline — this is an acceptable trade-off in an emergency
+    ///         to avoid an additional AAVE interaction that could fail if AAVE is degraded.
     ///
     ///         If AAVE is fully paused (not just frozen), this call will revert.
     ///         In that case there is no on-chain remedy until AAVE unpauses.
     function emergencyExitAave() external onlyOwner nonReentrant {
-        if (IERC20(ATOKEN).balanceOf(address(this)) == 0) return;
+        if (!paused()) _pause();
+        uint256 aTokenBalance = IERC20(ATOKEN).balanceOf(address(this));
+        if (aTokenBalance == 0) return;
         // type(uint256).max lets Aave resolve the live balance server-side,
         // removing the 1-wei race condition caused by the rebasing aToken.
         uint256 withdrawn = IAavePool(AAVE_POOL).withdraw(asset(), type(uint256).max, address(this));
+        lastTotalAssets = totalAssets();
+        lastHarvestTimestamp = block.timestamp;
         emit EmergencyExitAave(withdrawn, block.timestamp);
     }
 }
