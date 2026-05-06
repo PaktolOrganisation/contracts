@@ -503,6 +503,7 @@ contract PaktolVaultTest is Test {
     function test_harvest_updatesTimestamp() public {
         _deposit(vaultStd, user, DEPOSIT);
         _warp(7 days);
+        _simulateYield(vaultStd, 10e18);
 
         uint256 before = vaultStd.lastHarvestTimestamp();
 
@@ -510,6 +511,37 @@ contract PaktolVaultTest is Test {
         vaultStd.harvest();
 
         assertGt(vaultStd.lastHarvestTimestamp(), before);
+    }
+
+    /// @dev F-20: no-yield harvest must NOT advance lastHarvestTimestamp.
+    ///      A malicious harvester calling during zero-yield periods would compress
+    ///      the elapsed window on the next profitable harvest, capping users' yield.
+    function test_f20_noYield_harvest_preserves_timestamp() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(7 days);
+
+        uint256 tsBefore = vaultStd.lastHarvestTimestamp();
+
+        // No yield simulated — no-yield branch taken.
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        assertEq(vaultStd.lastHarvestTimestamp(), tsBefore, "timestamp must not advance on no-yield harvest");
+
+        // Real yield accrues later — full elapsed window is preserved.
+        _warp(30 days);
+        _simulateYield(vaultStd, 35e18);
+
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        // maxNetYield = lastTotalAssets × 3.5% × 37days / 365days
+        // With fix: elapsed = 37 days from tsBefore → full cap applied
+        // Without fix: elapsed = 30 days (compressed by no-yield harvest) → smaller cap
+        uint256 elapsed = 37 days;
+        uint256 maxNetYield = (DEPOSIT * 350 * elapsed) / (10_000 * 365 days);
+        assertApproxEqAbs(vaultStd.totalAssets(), DEPOSIT + 35e18 - eure.balanceOf(treasury), 1e9);
+        assertGe(vaultStd.totalAssets(), DEPOSIT + maxNetYield - 1e9, "full cap window must be applied");
     }
 
     /* ─────────────────────── PAUSE / GUARDIAN ───────────────────────── */

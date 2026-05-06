@@ -493,10 +493,11 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
         uint256 current = totalAssets();
 
-        // No yield or loss — reset snapshot and exit cleanly.
+        // No yield or loss — update snapshot but preserve timestamp.
+        // Advancing the timestamp here would shrink the elapsed window on the next
+        // profitable harvest, compressing maxNetYield and redirecting yield to treasury.
         if (current <= lastTotalAssets) {
             lastTotalAssets = current;
-            lastHarvestTimestamp = block.timestamp;
             return;
         }
 
