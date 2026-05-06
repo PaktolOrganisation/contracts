@@ -628,9 +628,11 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (!paused()) _pause();
         uint256 aTokenBalance = IERC20(ATOKEN).balanceOf(address(this));
         if (aTokenBalance == 0) return;
-        IAavePool(AAVE_POOL).withdraw(asset(), aTokenBalance, address(this));
+        // type(uint256).max lets Aave resolve the live balance server-side,
+        // removing the 1-wei race condition caused by the rebasing aToken.
+        uint256 withdrawn = IAavePool(AAVE_POOL).withdraw(asset(), type(uint256).max, address(this));
         lastTotalAssets = totalAssets();
         lastHarvestTimestamp = block.timestamp;
-        emit EmergencyExitAave(aTokenBalance, block.timestamp);
+        emit EmergencyExitAave(withdrawn, block.timestamp);
     }
 }

@@ -85,15 +85,18 @@ contract MockAavePool {
     }
 
     /// @dev Burns aEURe from msg.sender (the vault), sends EURe from aToken to `to`.
-    ///      Supports harvest path (to = TREASURY) and user withdrawal (to = vault).
+    ///      Mirrors Aave v3: type(uint256).max resolves to caller's full aToken balance.
     function withdraw(
         address,
         uint256 amount,
         address to
     ) external returns (uint256) {
-        aToken.burn(msg.sender, amount);
-        aToken.transferUnderlying(to, amount);
-        return amount;
+        uint256 resolved = amount == type(uint256).max
+            ? aToken.balanceOf(msg.sender)
+            : amount;
+        aToken.burn(msg.sender, resolved);
+        aToken.transferUnderlying(to, resolved);
+        return resolved;
     }
 
     /// @notice Simulates interest accrual. Call eure.mint(address(pool.aToken()), amount) first.
