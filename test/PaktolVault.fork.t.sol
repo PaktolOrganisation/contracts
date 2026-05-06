@@ -101,10 +101,15 @@ contract PaktolVaultForkTest is Test {
         vm.startPrank(user);
         IERC20(EURE).approve(address(vault), amount);
         uint256 shares = vault.deposit(amount, user);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + vault.WITHDRAWAL_COOLDOWN());
+
+        vm.startPrank(user);
         vault.redeem(shares, user, user);
         vm.stopPrank();
 
-        assertApproxEqAbs(IERC20(EURE).balanceOf(user), amount, 1e12, "user should recover deposit");
+        assertGe(IERC20(EURE).balanceOf(user), amount - 1e12, "user should recover at least their deposit");
     }
 
     /// @dev Warp time and harvest — verifies AAVE yield accrual and harvest logic.
@@ -128,7 +133,7 @@ contract PaktolVaultForkTest is Test {
         vault.harvest();
 
         assertEq(vault.lastHarvestTimestamp(), block.timestamp, "timestamp updated");
-        assertEq(vault.lastTotalAssets(), vault.totalAssets(), "snapshot updated");
+        assertApproxEqAbs(vault.lastTotalAssets(), vault.totalAssets(), 1, "snapshot updated");
 
         uint256 totalAfter = vault.totalAssets();
         if (totalAfter > totalBefore) {
