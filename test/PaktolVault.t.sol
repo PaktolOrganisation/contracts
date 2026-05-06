@@ -753,6 +753,7 @@ contract PaktolVaultTest is Test {
         _simulateYield(vaultStd, yieldAmount);
 
         uint256 withdrawAmount = 200e18;
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
         vm.prank(user);
         vaultStd.withdraw(withdrawAmount, user, user);
 
