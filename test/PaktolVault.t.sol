@@ -179,12 +179,12 @@ contract PaktolVaultTest is Test {
     }
 
     function test_constructor_revert_zeroAsset() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.ZeroAddress.selector, "asset"));
         this.helper_deployZeroAsset();
     }
 
     function test_constructor_revert_zeroTreasury() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.ZeroAddress.selector, "treasury"));
         this.helper_deployZeroTreasury();
     }
 
@@ -561,7 +561,7 @@ contract PaktolVaultTest is Test {
     }
 
     function test_setGuardian_revert_zeroAddress() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.ZeroAddress.selector, "newGuardian"));
         vm.prank(owner);
         vaultStd.setGuardian(address(0));
     }
@@ -580,7 +580,7 @@ contract PaktolVaultTest is Test {
     }
 
     function test_setHarvester_revert_zeroAddress() public {
-        vm.expectRevert(PaktolVault.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.ZeroAddress.selector, "newHarvester"));
         vm.prank(owner);
         vaultStd.setHarvester(address(0));
     }
