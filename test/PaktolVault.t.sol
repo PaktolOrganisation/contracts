@@ -169,6 +169,30 @@ contract PaktolVaultTest is Test {
         );
     }
 
+    function helper_deployOwnerEqualsGuardian() external {
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, owner, harvester,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
+    }
+
+    function helper_deployOwnerEqualsHarvester() external {
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, guardian, owner,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
+    }
+
+    function helper_deployGuardianEqualsHarvester() external {
+        new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, guardian, guardian,
+            address(pool), address(pool.aToken()), 0, signerAddr, false
+        );
+    }
+
     /* ─────────────────────── CONSTRUCTOR ────────────────────────────── */
 
     function test_constructor_immutables() public view {
@@ -224,6 +248,22 @@ contract PaktolVaultTest is Test {
             address(pool), address(pool.aToken()), 0, signerAddr, false
         );
         assertEq(v.FEE_BPS(), 200);
+    }
+
+    // F-14: role separation enforced in constructor
+    function test_f14_constructor_revert_ownerEqualsGuardian() public {
+        vm.expectRevert(PaktolVault.RolesNotSeparated.selector);
+        this.helper_deployOwnerEqualsGuardian();
+    }
+
+    function test_f14_constructor_revert_ownerEqualsHarvester() public {
+        vm.expectRevert(PaktolVault.RolesNotSeparated.selector);
+        this.helper_deployOwnerEqualsHarvester();
+    }
+
+    function test_f14_constructor_revert_guardianEqualsHarvester() public {
+        vm.expectRevert(PaktolVault.RolesNotSeparated.selector);
+        this.helper_deployGuardianEqualsHarvester();
     }
 
     function test_constructor_revert_aTokenMismatch() public {
@@ -647,6 +687,31 @@ contract PaktolVaultTest is Test {
         vm.expectRevert();
         vm.prank(user);
         vaultStd.setHarvester(makeAddr("x"));
+    }
+
+    // F-14: role separation enforced in setGuardian / setHarvester
+    function test_f14_setGuardian_revert_equalsOwner() public {
+        vm.expectRevert(PaktolVault.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setGuardian(owner);
+    }
+
+    function test_f14_setGuardian_revert_equalsHarvester() public {
+        vm.expectRevert(PaktolVault.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setGuardian(harvester);
+    }
+
+    function test_f14_setHarvester_revert_equalsOwner() public {
+        vm.expectRevert(PaktolVault.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setHarvester(owner);
+    }
+
+    function test_f14_setHarvester_revert_equalsGuardian() public {
+        vm.expectRevert(PaktolVault.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setHarvester(guardian);
     }
 
     function test_maxDeposit_returnsZero_whenPaused() public {
