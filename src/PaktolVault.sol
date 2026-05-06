@@ -59,6 +59,12 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     ///         from draining yield to the treasury via high-frequency calls.
     uint256 public constant MIN_HARVEST_INTERVAL = 1 days;
 
+    /// @notice Minimum hold time after a deposit before withdrawal is allowed.
+    ///         Prevents sandwich attacks on harvest(): an attacker depositing just
+    ///         before harvest() cannot withdraw until 4 hours have elapsed.
+    ///         Bypassed when the vault is paused (emergency exit must always be possible).
+    uint256 public constant WITHDRAWAL_COOLDOWN = 4 hours;
+
     /* ─────────────────────────── IMMUTABLES ────────────────────────── */
 
     /// @notice Annual net yield cap in basis points (350 = 3.5% / 500 = 5%).
@@ -102,6 +108,9 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @notice Timestamp of the last harvest.
     uint256 public lastHarvestTimestamp;
 
+    /// @notice Timestamp of the last deposit per address. Used to enforce WITHDRAWAL_COOLDOWN.
+    mapping(address => uint256) public depositTimestamp;
+
     /// @notice Emergency pause address. Cannot move funds.
     address public guardian;
 
@@ -136,6 +145,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     error UseDepositWithAuth();
     error InvalidSignature();
     error SignatureExpired();
+    error WithdrawalCooldown(uint256 availableAt);
 
     /* ─────────────────────────── CONSTRUCTOR ───────────────────────── */
 
@@ -239,11 +249,13 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     /// @notice Maximum assets owner_ can withdraw, bounded by AAVE available liquidity.
+    ///         Returns 0 if owner_ is within the WITHDRAWAL_COOLDOWN window (vault not paused).
     ///         Returns less than the full position if AAVE liquidity is insufficient.
     ///         Withdrawals are always open (no whenNotPaused).
     function maxWithdraw(
         address owner_
     ) public view override returns (uint256) {
+        if (!paused() && block.timestamp < depositTimestamp[owner_] + WITHDRAWAL_COOLDOWN) return 0;
         uint256 userAssets = convertToAssets(balanceOf(owner_));
         uint256 idle = IERC20(asset()).balanceOf(address(this));
         uint256 aaveLiquidity = IERC20(asset()).balanceOf(ATOKEN);
@@ -254,11 +266,13 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     /// @notice Maximum shares owner_ can redeem, bounded by AAVE available liquidity.
+    ///         Returns 0 if owner_ is within the WITHDRAWAL_COOLDOWN window (vault not paused).
     ///         Returns balanceOf(owner_) directly when not liquidity-constrained to
     ///         avoid double-rounding (convertToShares(convertToAssets(x)) < x).
     function maxRedeem(
         address owner_
     ) public view override returns (uint256) {
+        if (!paused() && block.timestamp < depositTimestamp[owner_] + WITHDRAWAL_COOLDOWN) return 0;
         uint256 userShares = balanceOf(owner_);
         uint256 idle = IERC20(asset()).balanceOf(address(this));
         uint256 aaveLiquidity = IERC20(asset()).balanceOf(ATOKEN);
@@ -338,6 +352,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 shares = super.deposit(assets, receiver);
         _depositToAave();
         _syncLastTotalAssets(int256(assets));
+        depositTimestamp[receiver] = block.timestamp;
         return shares;
     }
 
@@ -427,6 +442,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 assetsUsed = super.mint(shares, receiver);
         _depositToAave();
         _syncLastTotalAssets(int256(assetsUsed));
+        depositTimestamp[receiver] = block.timestamp;
         return assetsUsed;
     }
 
@@ -438,6 +454,9 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address receiver,
         address owner_
     ) public override nonReentrant returns (uint256) {
+        if (!paused() && block.timestamp < depositTimestamp[owner_] + WITHDRAWAL_COOLDOWN) {
+            revert WithdrawalCooldown(depositTimestamp[owner_] + WITHDRAWAL_COOLDOWN);
+        }
         uint256 shares = super.withdraw(assets, receiver, owner_);
         _syncLastTotalAssets(-int256(assets));
         return shares;
@@ -451,9 +470,24 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address receiver,
         address owner_
     ) public override nonReentrant returns (uint256) {
+        if (!paused() && block.timestamp < depositTimestamp[owner_] + WITHDRAWAL_COOLDOWN) {
+            revert WithdrawalCooldown(depositTimestamp[owner_] + WITHDRAWAL_COOLDOWN);
+        }
         uint256 assets = super.redeem(shares, receiver, owner_);
         _syncLastTotalAssets(-int256(assets));
         return assets;
+    }
+
+    /// @dev Propagates depositTimestamp on share transfers to prevent cooldown bypass.
+    ///      Without this, an attacker could deposit, transfer shares to a fresh address,
+    ///      and that address would have no cooldown — bypassing the sandwich protection.
+    function _update(address from, address to, uint256 amount) internal override {
+        super._update(from, to, amount);
+        if (from != address(0) && to != address(0)) {
+            if (depositTimestamp[from] > depositTimestamp[to]) {
+                depositTimestamp[to] = depositTimestamp[from];
+            }
+        }
     }
 
     /// @dev CEI-compliant internal hook called by withdraw() and redeem().
