@@ -192,7 +192,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (aToken_ == address(0)) revert ZeroAddress("aToken");
         if (signer_ == address(0)) revert ZeroAddress("signer");
         if (capBps_ == 0 || capBps_ > BPS_DENOMINATOR) revert CapOutOfRange(capBps_);
-        if (feeBps_ >= BPS_DENOMINATOR) revert FeeOutOfRange(feeBps_);
+        if (feeBps_ > FLOOR_BPS) revert FeeOutOfRange(feeBps_);
 
         IAavePool.ReserveData memory reserve = IAavePool(aavePool_).getReserveData(address(asset_));
         if (reserve.aTokenAddress != aToken_) revert ATokenMismatch(aToken_, reserve.aTokenAddress);
