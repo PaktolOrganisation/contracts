@@ -285,6 +285,10 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         shares = _executeDeposit(accepted, receiver);
     }
 
+    /// @dev F-13: permit is only called when allowance is insufficient.
+    ///      If permit fails (nonce unchanged), revert — prevents a third party from
+    ///      triggering a deposit against a residual pre-existing allowance via an
+    ///      invalid/expired permit signature.
     function depositWithPermit(
         uint256 assets,
         address receiver,
@@ -293,8 +297,11 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     ) external whenNotPaused nonReentrant returns (uint256) {
         if (REQUIRES_AUTH) revert UseDepositWithAuth();
         if (assets < MIN_DEPOSIT) revert DepositTooSmall(assets, MIN_DEPOSIT);
-        try IERC20Permit(asset()).permit(msg.sender, address(this), assets, deadline, v, r, s) { } catch { }
-        if (IERC20(asset()).allowance(msg.sender, address(this)) < assets) revert InsufficientAllowance();
+        if (IERC20(asset()).allowance(msg.sender, address(this)) < assets) {
+            uint256 nonceBefore = IERC20Permit(asset()).nonces(msg.sender);
+            try IERC20Permit(asset()).permit(msg.sender, address(this), assets, deadline, v, r, s) { } catch { }
+            if (IERC20Permit(asset()).nonces(msg.sender) == nonceBefore) revert InsufficientAllowance();
+        }
         return _executeDeposit(assets, receiver);
     }
 
