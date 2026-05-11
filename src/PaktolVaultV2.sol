@@ -83,6 +83,9 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     mapping(address => uint256) public depositTimestamp;
     address public guardian;
     address public harvester;
+    /// @dev Tracks EURC held idle by this contract after emergencyExitByzantine().
+    ///      Explicit tracking prevents donations from inflating totalAssets() (F-10).
+    uint256 private _idleBalance;
 
     /* ───────────────────────────── EVENTS ──────────────────────────── */
 
@@ -218,11 +221,14 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ──────────────────────────── TOTAL ASSETS ─────────────────────── */
 
-    /// @notice Byzantine shares converted to EURC + any idle EURC held by this vault.
+    /// @notice Value of Byzantine vault shares + tracked idle EURC.
+    /// @dev    Uses _idleBalance instead of balanceOf(address(this)) to prevent donation
+    ///         inflation (F-10). _idleBalance is only set by emergencyExitByzantine() —
+    ///         direct EURC transfers to this contract are silently ignored in yield accounting.
     function totalAssets() public view override returns (uint256) {
         uint256 bzyShares = BYZANTINE_VAULT.balanceOf(address(this));
         uint256 bzyValue  = bzyShares > 0 ? BYZANTINE_VAULT.convertToAssets(bzyShares) : 0;
-        return bzyValue + IERC20(asset()).balanceOf(address(this));
+        return bzyValue + _idleBalance;
     }
 
     /* ─────────────────────── BYZANTINE ROUTING ─────────────────────── */
@@ -334,6 +340,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         }
         uint256 shares = super.withdraw(assets, receiver, owner_);
         _syncLastTotalAssets(-int256(assets));
+        if (_idleBalance != 0) _idleBalance = _idleBalance > assets ? _idleBalance - assets : 0;
         return shares;
     }
 
@@ -343,6 +350,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         }
         uint256 assets = super.redeem(shares, receiver, owner_);
         _syncLastTotalAssets(-int256(assets));
+        if (_idleBalance != 0) _idleBalance = _idleBalance > assets ? _idleBalance - assets : 0;
         return assets;
     }
 
@@ -448,6 +456,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 shares = BYZANTINE_VAULT.balanceOf(address(this));
         if (shares == 0) return;
         uint256 withdrawn = BYZANTINE_VAULT.redeem(shares, address(this), address(this));
+        _idleBalance         = withdrawn;
         lastTotalAssets      = totalAssets();
         lastHarvestTimestamp = block.timestamp;
         emit EmergencyExitV2(withdrawn, block.timestamp);

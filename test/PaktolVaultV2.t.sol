@@ -1335,4 +1335,72 @@ contract PaktolVaultV2Test is Test {
 
         assertGt(vaultStd.totalAssets(), before);
     }
+
+    /* ─────────────────────────── F-10 tests ────────────────────────── */
+
+    /// @dev Direct EURC transfer must not inflate totalAssets() or grossYield.
+    function test_f10_donation_doesNotInflateTotalAssets() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        uint256 assetsBefore = vaultStd.totalAssets();
+
+        // Attacker donates directly to vault without going through deposit()
+        vm.prank(user2);
+        eurc.transfer(address(vaultStd), 1_000e6);
+
+        assertEq(vaultStd.totalAssets(), assetsBefore, "donation must not inflate totalAssets");
+    }
+
+    /// @dev Donation must not create artificial grossYield at harvest.
+    function test_f10_donation_doesNotInflateHarvestYield() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        vm.warp(block.timestamp + vaultStd.MIN_HARVEST_INTERVAL() + 1);
+
+        // Harvest before donation — baseline
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        uint256 lastAssets = vaultStd.lastTotalAssets();
+
+        // Attacker donates after harvest snapshot
+        vm.prank(user2);
+        eurc.transfer(address(vaultStd), 1_000e6);
+
+        // Simulate real yield
+        mockStd.simulateYield(10e6);
+
+        vm.warp(block.timestamp + vaultStd.MIN_HARVEST_INTERVAL() + 1);
+
+        uint256 treasuryBefore = eurc.balanceOf(treasury);
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        // Treasury should only receive yield from Byzantine, not from the donation
+        uint256 harvested = eurc.balanceOf(treasury) - treasuryBefore;
+        assertLt(harvested, 1_000e6, "donation must not reach treasury via harvest");
+        assertApproxEqAbs(vaultStd.lastTotalAssets(), lastAssets + 10e6 - harvested, 1e3, "lastTotalAssets must not include donation");
+    }
+
+    /// @dev After emergency exit, idle EURC must still be counted in totalAssets
+    ///      so users can fully redeem their shares.
+    function test_f10_emergencyExit_idleStillCountedInTotalAssets() public {
+        uint256 shares = _deposit(vaultStd, user, DEPOSIT);
+
+        vm.prank(guardian);
+        vaultStd.pause();
+        vm.prank(owner);
+        vaultStd.emergencyExitByzantine();
+
+        // totalAssets must equal DEPOSIT (all funds now idle)
+        assertApproxEqAbs(vaultStd.totalAssets(), DEPOSIT, 1e3);
+
+        // User can fully redeem
+        uint256 balBefore = eurc.balanceOf(user);
+        vm.prank(user);
+        vaultStd.redeem(shares, user, user);
+        assertApproxEqAbs(eurc.balanceOf(user) - balBefore, DEPOSIT, 1e3);
+
+        // _idleBalance drains to zero after full redemption
+        assertEq(vaultStd.totalAssets(), 0);
+    }
 }
