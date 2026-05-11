@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import "@openzeppelin/contracts/interfaces/IERC4626.sol";
@@ -87,6 +87,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /* ───────────────────────────── EVENTS ──────────────────────────── */
 
     event Harvested(uint256 grossYield, uint256 toTreasury, uint256 toUsers, uint256 timestamp);
+    event HarvestSkipped(uint256 totalAssets, uint256 timestamp);
     event GuardianChanged(address indexed oldGuardian, address indexed newGuardian);
     event HarvesterChanged(address indexed oldHarvester, address indexed newHarvester);
     event EmergencyExitV2(uint256 amount, uint256 timestamp);
@@ -386,6 +387,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
         if (current <= lastTotalAssets) {
             lastTotalAssets = current;
+            emit HarvestSkipped(current, block.timestamp);
             return;
         }
 
