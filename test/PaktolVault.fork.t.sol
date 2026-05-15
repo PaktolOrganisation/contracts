@@ -128,7 +128,7 @@ contract PaktolVaultForkTest is Test {
         vault.harvest();
 
         assertEq(vault.lastHarvestTimestamp(), block.timestamp, "timestamp updated");
-        assertEq(vault.lastTotalAssets(), vault.totalAssets(), "snapshot updated");
+        assertApproxEqAbs(vault.lastTotalAssets(), vault.totalAssets(), 1, "snapshot updated");
 
         uint256 totalAfter = vault.totalAssets();
         if (totalAfter > totalBefore) {

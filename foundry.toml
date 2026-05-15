@@ -43,5 +43,5 @@ gnosis = "${GNOSIS_RPC_URL}"
 mainnet = { key = "${ETHERSCAN_API_KEY}" }
 sepolia = { key = "${ETHERSCAN_API_KEY}" }
 arbitrum = { key = "${ARBISCAN_API_KEY}" }
-base = { key = "${BASESCAN_API_KEY}" }
+base = { key = "${BASESCAN_API_KEY}", chain = 8453 }
 base_sepolia = { key = "${BASESCAN_API_KEY}", chain = 84532 }
