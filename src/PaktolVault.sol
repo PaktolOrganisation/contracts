@@ -367,6 +367,25 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         return _executeDeposit(assets, receiver);
     }
 
+    /// @notice Deposit up to `assets` EURe, capping at remaining TVL capacity.
+    ///         Eliminates the TVL-cap griefing vector: instead of reverting when the cap
+    ///         is nearly full, deposits only what fits and returns the accepted amount.
+    ///         The caller must approve at least `assets`; any unused allowance is not consumed.
+    /// @param assets   Maximum amount the caller wishes to deposit.
+    /// @param receiver Address that will receive the vault shares.
+    /// @return accepted Actual assets deposited (≤ assets).
+    /// @return shares   Shares minted to receiver.
+    function depositUpToCap(
+        uint256 assets,
+        address receiver
+    ) external whenNotPaused nonReentrant returns (uint256 accepted, uint256 shares) {
+        if (REQUIRES_AUTH) revert UseDepositWithAuth();
+        uint256 remaining = maxDeposit(receiver);
+        if (remaining == 0) return (0, 0);
+        accepted = assets > remaining ? remaining : assets;
+        shares = _executeDeposit(accepted, receiver);
+    }
+
     /// @notice Deposit EURe using an EIP-2612 permit — approve + deposit in one transaction.
     /// @param assets    Amount of EURe to deposit.
     /// @param receiver  Address that will receive the vault shares.

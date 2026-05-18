@@ -313,6 +313,93 @@ contract PaktolVaultTest is Test {
         vm.stopPrank();
     }
 
+    // F-19: depositUpToCap — partial deposit when near TVL cap
+    function test_f19_depositUpToCap_full_when_under_cap() public {
+        PaktolVault capped = new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), 2_000e18, signerAddr, false
+        );
+        eure.mint(user, 1_000e18);
+        vm.startPrank(user);
+        eure.approve(address(capped), 1_000e18);
+        (uint256 accepted, uint256 shares) = capped.depositUpToCap(1_000e18, user);
+        vm.stopPrank();
+
+        assertEq(accepted, 1_000e18, "full amount accepted when under cap");
+        assertGt(shares, 0, "shares minted");
+    }
+
+    function test_f19_depositUpToCap_truncates_at_cap() public {
+        uint256 cap = 1_500e18;
+        PaktolVault capped = new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), cap, signerAddr, false
+        );
+        // Fill 1000 of the 1500 cap
+        eure.mint(user, 1_000e18);
+        vm.startPrank(user);
+        eure.approve(address(capped), 1_000e18);
+        capped.deposit(1_000e18, user);
+        vm.stopPrank();
+
+        _warp(capped.WITHDRAWAL_COOLDOWN());
+
+        // Try to deposit 1000 more — only 500 fits
+        eure.mint(user2, 1_000e18);
+        vm.startPrank(user2);
+        eure.approve(address(capped), 1_000e18);
+        (uint256 accepted, uint256 shares) = capped.depositUpToCap(1_000e18, user2);
+        vm.stopPrank();
+
+        assertApproxEqAbs(accepted, 500e18, 1e9, "truncated to remaining capacity");
+        assertGt(shares, 0, "shares minted");
+        assertApproxEqAbs(capped.totalAssets(), cap, 1e9, "vault at cap");
+    }
+
+    function test_f19_depositUpToCap_returns_zero_when_full() public {
+        uint256 cap = 1_000e18;
+        PaktolVault capped = new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), cap, signerAddr, false
+        );
+        eure.mint(user, cap);
+        vm.startPrank(user);
+        eure.approve(address(capped), cap);
+        capped.deposit(cap, user);
+        vm.stopPrank();
+
+        _warp(capped.WITHDRAWAL_COOLDOWN());
+
+        eure.mint(user2, 500e18);
+        vm.startPrank(user2);
+        eure.approve(address(capped), 500e18);
+        (uint256 accepted, uint256 shares) = capped.depositUpToCap(500e18, user2);
+        vm.stopPrank();
+
+        assertEq(accepted, 0, "nothing accepted when cap full");
+        assertEq(shares, 0, "no shares minted");
+    }
+
+    function test_f19_deposit_still_reverts_at_cap() public {
+        uint256 cap = 1_000e18;
+        PaktolVault capped = new PaktolVault(
+            IERC20(address(eure)), "x", "x", owner,
+            treasury, CAP_STD, FEE_STD, guardian, harvester,
+            address(pool), address(pool.aToken()), cap, signerAddr, false
+        );
+        eure.mint(user, cap + 1e18);
+        vm.startPrank(user);
+        eure.approve(address(capped), cap + 1e18);
+        capped.deposit(cap, user);
+        _warp(capped.WITHDRAWAL_COOLDOWN());
+        vm.expectRevert(abi.encodeWithSelector(PaktolVault.TvlCapExceeded.selector, capped.totalAssets(), cap));
+        capped.deposit(1e18, user);
+        vm.stopPrank();
+    }
+
     function test_mint_basic() public {
         uint256 sharesToMint = 500e18;
         vm.startPrank(user);
