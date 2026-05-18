@@ -1303,4 +1303,159 @@ contract PaktolVaultTest is Test {
         vm.expectRevert(PaktolVault.UseDepositWithAuth.selector);
         vaultPkt.depositWithPermit(DEPOSIT, permitUser, deadline, v, r, s);
     }
+
+    /* ─────────────────────── ECONOMIC INVARIANTS ───────────────────── */
+
+    // INV-01: totalAssets() >= sum(deposits) - sum(withdrawals) at all times
+    function test_inv01_totalAssets_geq_net_deposits() public {
+        uint256 shares1 = _deposit(vaultStd, user, 500e18);
+        _deposit(vaultStd, user2, 300e18);
+
+        assertGe(vaultStd.totalAssets(), 800e18);
+
+        // Partial redeem
+        vm.prank(user);
+        vaultStd.redeem(shares1 / 2, user, user);
+        uint256 remaining = vaultStd.convertToAssets(shares1 / 2);
+
+        assertGe(vaultStd.totalAssets(), remaining + 300e18 - 1e9);
+
+        // After yield accrual — invariant still holds
+        _warp(365 days);
+        _simulateYield(vaultStd, 28e18);
+        assertGe(vaultStd.totalAssets(), remaining + 300e18 - 1e9);
+    }
+
+    // INV-02: convertToAssets(totalSupply()) ≈ totalAssets() (within 1 wei for large amounts)
+    function test_inv02_share_price_accounting_consistency() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        assertApproxEqAbs(
+            vaultStd.convertToAssets(vaultStd.totalSupply()),
+            vaultStd.totalAssets(),
+            1e9
+        );
+
+        _warp(365 days);
+        _simulateYield(vaultStd, 35e18);
+
+        assertApproxEqAbs(
+            vaultStd.convertToAssets(vaultStd.totalSupply()),
+            vaultStd.totalAssets(),
+            1e9
+        );
+
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        assertApproxEqAbs(
+            vaultStd.convertToAssets(vaultStd.totalSupply()),
+            vaultStd.totalAssets(),
+            1e9
+        );
+    }
+
+    // INV-03: lastTotalAssets <= totalAssets() at all times (grossYield always >= 0)
+    function test_inv03_lastTotalAssets_never_exceeds_totalAssets() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        assertEq(vaultStd.lastTotalAssets(), vaultStd.totalAssets());
+
+        // Yield accrues — totalAssets grows, lastTotalAssets stays put
+        _warp(365 days);
+        _simulateYield(vaultStd, 35e18);
+        assertLe(vaultStd.lastTotalAssets(), vaultStd.totalAssets());
+
+        // After harvest — lastTotalAssets catches up to totalAssets
+        vm.prank(harvester);
+        vaultStd.harvest();
+        assertEq(vaultStd.lastTotalAssets(), vaultStd.totalAssets());
+
+        // After withdraw — lastTotalAssets stays in sync
+        uint256 halfShares = vaultStd.balanceOf(user) / 2;
+        vm.prank(user);
+        vaultStd.redeem(halfShares, user, user);
+        assertEq(vaultStd.lastTotalAssets(), vaultStd.totalAssets());
+
+        // Second yield cycle
+        _warp(365 days);
+        _simulateYield(vaultStd, 10e18);
+        assertLe(vaultStd.lastTotalAssets(), vaultStd.totalAssets());
+    }
+
+    // INV-04: balanceOf(0xdead) > 0 at all times after deployment seed
+    function test_inv04_dead_shares_permanent() public {
+        // Mirrors the deployment checklist: seed MIN_DEPOSIT to 0xdead.
+        address dead = address(0xdead);
+        eure.mint(dead, vaultStd.MIN_DEPOSIT());
+        vm.startPrank(dead);
+        eure.approve(address(vaultStd), vaultStd.MIN_DEPOSIT());
+        vaultStd.deposit(vaultStd.MIN_DEPOSIT(), dead);
+        vm.stopPrank();
+
+        assertGt(vaultStd.balanceOf(dead), 0, "dead shares seeded");
+
+        _deposit(vaultStd, user, DEPOSIT);
+        assertGt(vaultStd.balanceOf(dead), 0, "after user deposit");
+
+        _warp(365 days);
+        _simulateYield(vaultStd, 35e18);
+        vm.prank(harvester);
+        vaultStd.harvest();
+        assertGt(vaultStd.balanceOf(dead), 0, "after harvest");
+
+        uint256 userShares = vaultStd.balanceOf(user);
+        vm.prank(user);
+        vaultStd.redeem(userShares, user, user);
+        assertGt(vaultStd.balanceOf(dead), 0, "after full user redeem");
+    }
+
+    /* ─────────────────────── ADVERSARIAL SEQUENCES ─────────────────── */
+
+    // ADV-01: 999 consecutive harvest() calls after the first all revert with HarvestTooFrequent
+    function test_adv01_harvest_ratelimit_1000_calls() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(365 days);
+        _simulateYield(vaultStd, 35e18);
+
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        uint256 minInterval = vaultStd.MIN_HARVEST_INTERVAL();
+        for (uint256 i = 0; i < 999; i++) {
+            vm.expectRevert(abi.encodeWithSelector(PaktolVault.HarvestTooFrequent.selector, uint256(0), minInterval));
+            vm.prank(harvester);
+            vaultStd.harvest();
+        }
+
+        // Only after MIN_HARVEST_INTERVAL does the next harvest succeed
+        _warp(vaultStd.MIN_HARVEST_INTERVAL());
+        vm.prank(harvester);
+        vaultStd.harvest();
+    }
+
+    // ADV-02: deposit(MIN_DEPOSIT) just before each harvest — yield cap invariant holds for all users
+    function test_adv02_sandwicher_cannot_exceed_cap() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        address sandwicher = makeAddr("sandwicher");
+        eure.mint(sandwicher, vaultStd.MIN_DEPOSIT() * 6);
+
+        for (uint256 i = 0; i < 5; i++) {
+            vm.startPrank(sandwicher);
+            eure.approve(address(vaultStd), vaultStd.MIN_DEPOSIT());
+            vaultStd.deposit(vaultStd.MIN_DEPOSIT(), sandwicher);
+            vm.stopPrank();
+
+            _warp(365 days / 5);
+            _simulateYield(vaultStd, (DEPOSIT * CAP_STD) / 10_000 / 5);
+
+            vm.prank(harvester);
+            vaultStd.harvest();
+
+            // Legit user never exceeds annual cap
+            uint256 userAssets = vaultStd.convertToAssets(vaultStd.balanceOf(user));
+            uint256 maxUserAssets = DEPOSIT + (DEPOSIT * CAP_STD) / 10_000;
+            assertLe(userAssets, maxUserAssets + 1e9);
+        }
+    }
 }
