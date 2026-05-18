@@ -1465,6 +1465,9 @@ contract PaktolVaultTest is Test {
 
         assertGe(vaultStd.totalAssets(), 800e18);
 
+        // Warp past cooldown before redeeming
+        _warp(4 hours + 1);
+
         // Partial redeem
         vm.prank(user);
         vaultStd.redeem(shares1 / 2, user, user);
