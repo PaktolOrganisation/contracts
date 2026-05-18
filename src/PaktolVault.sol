@@ -311,6 +311,9 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /* ───────────────────────────── AAVE ROUTING ────────────────────── */
 
     /// @dev Pushes all idle EURe into AAVE. Called at end of every deposit/mint.
+    ///      forceApprove is called on every invocation rather than once in the constructor.
+    ///      EURe (Monerium) may exhibit non-standard approval behaviour under future upgrades;
+    ///      re-approving each time is the safest pattern for such tokens (EIP-20 §approve).
     function _depositToAave() internal {
         uint256 amount = IERC20(asset()).balanceOf(address(this));
         if (amount == 0) return;
@@ -556,6 +559,9 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     ///         toTreasury = grossYield − toUsers        [aumFee + surplus above cap]
     ///
     ///         Treasury portion is withdrawn from AAVE and transferred directly.
+    /// @dev    TREASURY must be an EOA or a contract with a minimal receive() function.
+    ///         An expensive treasury receive() would increase the gas cost of every harvest()
+    ///         call. Verify this assumption before deployment.
     function harvest() external nonReentrant {
         if (msg.sender != owner() && msg.sender != harvester) revert NotHarvester();
 
@@ -601,6 +607,12 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (toTreasury > 0) {
             _withdrawFromAave(toTreasury, TREASURY);
         }
+
+        // Re-supply any residual idle EURe left after the treasury transfer.
+        // _withdrawFromAave preferentially consumes idle balance before pulling from Aave;
+        // if idle > toTreasury the surplus stays idle until the next deposit/mint.
+        // Calling _depositToAave() here eliminates that yield gap.
+        _depositToAave();
     }
 
     /* ───────────────────────────── GUARDIAN ────────────────────────── */
