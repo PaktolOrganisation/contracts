@@ -146,6 +146,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     error InvalidSignature();
     error SignatureExpired();
     error WithdrawalCooldown(uint256 availableAt);
+    error RolesNotSeparated();
 
     /* ─────────────────────────── CONSTRUCTOR ───────────────────────── */
 
@@ -193,6 +194,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (signer_ == address(0)) revert ZeroAddress("signer");
         if (capBps_ == 0 || capBps_ > BPS_DENOMINATOR) revert CapOutOfRange(capBps_);
         if (feeBps_ > FLOOR_BPS) revert FeeOutOfRange(feeBps_);
+        if (owner_ == guardian_ || owner_ == harvester_ || guardian_ == harvester_) revert RolesNotSeparated();
 
         IAavePool.ReserveData memory reserve = IAavePool(aavePool_).getReserveData(address(asset_));
         if (reserve.aTokenAddress != aToken_) revert ATokenMismatch(aToken_, reserve.aTokenAddress);
@@ -577,6 +579,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address newGuardian_
     ) external onlyOwner {
         if (newGuardian_ == address(0)) revert ZeroAddress("newGuardian");
+        if (newGuardian_ == owner() || newGuardian_ == harvester) revert RolesNotSeparated();
         emit GuardianChanged(guardian, newGuardian_);
         guardian = newGuardian_;
     }
@@ -586,6 +589,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address newHarvester_
     ) external onlyOwner {
         if (newHarvester_ == address(0)) revert ZeroAddress("newHarvester");
+        if (newHarvester_ == owner() || newHarvester_ == guardian) revert RolesNotSeparated();
         emit HarvesterChanged(harvester, newHarvester_);
         harvester = newHarvester_;
     }
