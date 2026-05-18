@@ -102,6 +102,10 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @notice totalAssets() snapshot — updated after every deposit, withdraw, and harvest.
     uint256 public lastTotalAssets;
 
+    /// @dev Tracks EURe held idle by this contract (e.g. after emergencyExitAave()).
+    ///      Explicit tracking prevents donations from inflating totalAssets() (F-10).
+    uint256 private _idleBalance;
+
     /// @notice Per-address nonce for depositWithAuth replay protection.
     mapping(address => uint256) public nonces;
 
@@ -304,8 +308,11 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @notice Returns aEURe balance + any idle EURe held by the vault.
     ///         aEURe rebases 1:1 with EURe — no conversion needed.
     ///         Idle EURe exists only transiently during a deposit transaction.
+    /// @dev Uses _idleBalance instead of balanceOf(address(this)) to prevent donation
+    ///      inflation (F-10). Direct EURe transfers to this contract are silently ignored
+    ///      in yield accounting.
     function totalAssets() public view override returns (uint256) {
-        return IERC20(ATOKEN).balanceOf(address(this)) + IERC20(asset()).balanceOf(address(this));
+        return IERC20(ATOKEN).balanceOf(address(this)) + _idleBalance;
     }
 
     /* ───────────────────────────── AAVE ROUTING ────────────────────── */
@@ -317,6 +324,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     function _depositToAave() internal {
         uint256 amount = IERC20(asset()).balanceOf(address(this));
         if (amount == 0) return;
+        _idleBalance = 0;
         IERC20(asset()).forceApprove(AAVE_POOL, amount);
         IAavePool(AAVE_POOL).supply(asset(), amount, address(this), 0);
     }
@@ -327,10 +335,13 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 amount,
         address to
     ) internal {
-        uint256 idle = IERC20(asset()).balanceOf(address(this));
+        uint256 idle = _idleBalance;
         uint256 needed = idle >= amount ? 0 : amount - idle;
         if (needed > 0) {
             IAavePool(AAVE_POOL).withdraw(asset(), needed, address(this));
+        }
+        if (idle > 0) {
+            _idleBalance = idle > amount ? idle - amount : 0;
         }
         if (to != address(this)) {
             IERC20(asset()).safeTransfer(to, amount);
@@ -414,12 +425,14 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     ) external whenNotPaused nonReentrant returns (uint256) {
         if (REQUIRES_AUTH) revert UseDepositWithAuth();
         if (assets < MIN_DEPOSIT) revert DepositTooSmall(assets, MIN_DEPOSIT);
-        // Front-run mitigation: if a front-runner already submitted the permit,
-        // the nonce is consumed and permit() would revert. We catch that case
-        // and check the allowance directly — the deposit proceeds either way.
-        try IERC20Permit(asset()).permit(msg.sender, address(this), assets, deadline, v, r, s) { } catch { }
+        // Skip permit if allowance is already sufficient (e.g. pre-existing or front-run permit).
+        // When permit is needed: record nonce before, attempt permit, then verify nonce advanced.
+        // If nonce did not advance the permit failed for a reason other than front-run (expired
+        // deadline, invalid signature) and no pre-existing allowance covers the deposit — revert.
         if (IERC20(asset()).allowance(msg.sender, address(this)) < assets) {
-            revert InsufficientAllowance();
+            uint256 nonceBefore = IERC20Permit(asset()).nonces(msg.sender);
+            try IERC20Permit(asset()).permit(msg.sender, address(this), assets, deadline, v, r, s) { } catch { }
+            if (IERC20Permit(asset()).nonces(msg.sender) == nonceBefore) revert InsufficientAllowance();
         }
         return _executeDeposit(assets, receiver);
     }
@@ -540,9 +553,12 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (caller != owner_) _spendAllowance(owner_, caller, shares);
         _burn(owner_, shares);
         emit Withdraw(caller, receiver, owner_, assets, shares);
-        uint256 idle = IERC20(asset()).balanceOf(address(this));
+        uint256 idle = _idleBalance;
         if (idle < assets) {
             IAavePool(AAVE_POOL).withdraw(asset(), assets - idle, address(this));
+        }
+        if (idle > 0) {
+            _idleBalance = idle > assets ? idle - assets : 0;
         }
         IERC20(asset()).safeTransfer(receiver, assets);
     }
@@ -678,6 +694,7 @@ contract PaktolVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         // type(uint256).max lets Aave resolve the live balance server-side,
         // removing the 1-wei race condition caused by the rebasing aToken.
         uint256 withdrawn = IAavePool(AAVE_POOL).withdraw(asset(), type(uint256).max, address(this));
+        _idleBalance = withdrawn;
         lastTotalAssets = totalAssets();
         lastHarvestTimestamp = block.timestamp;
         emit EmergencyExitAave(withdrawn, block.timestamp);
