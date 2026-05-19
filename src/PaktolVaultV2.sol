@@ -47,10 +47,11 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @notice APY floor below which the AUM fee is pro-rated down (200 = 2%).
     uint256 public constant FLOOR_BPS = 200;
 
-    /// @notice Minimum deposit. EURC has 6 decimals: 1e3 = 0.001 EURC.
-    uint256 public constant MIN_DEPOSIT = 1e3;
+    /// @notice Minimum deposit. EURC has 6 decimals: 1e3 = 0.001 EURC. Adjustable by owner.
+    uint256 public minDeposit = 1e3;
 
-    uint256 public constant MIN_HARVEST_INTERVAL = 1 days;
+    /// @notice Minimum time between harvests. Adjustable by owner. Minimum 1 hour.
+    uint256 public minHarvestInterval = 1 days;
 
     uint256 public constant WITHDRAWAL_COOLDOWN = 4 hours;
 
@@ -81,12 +82,19 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     address public guardian;
     address public harvester;
 
+    /// @notice Backend EOA allowed to call grantPremiumAccess() only.
+    ///         address(0) = disabled (only owner can grant). Changeable by owner (Safe).
+    address public granter;
+
     /* ───────────────────────────── EVENTS ──────────────────────────── */
 
     event Harvested(uint256 grossYield, uint256 toTreasury, uint256 toUsers, uint256 timestamp);
     event HarvestSkipped(uint256 totalAssets, uint256 timestamp);
     event GuardianChanged(address indexed oldGuardian, address indexed newGuardian);
     event HarvesterChanged(address indexed oldHarvester, address indexed newHarvester);
+    event GranterChanged(address indexed oldGranter, address indexed newGranter);
+    event MinHarvestIntervalUpdated(uint256 oldInterval, uint256 newInterval);
+    event MinDepositUpdated(uint256 oldMinDeposit, uint256 newMinDeposit);
     event EmergencyExitV2(uint256 amount, uint256 timestamp);
     event PointsUpdated(address indexed user, uint256 amount);
     event PremiumThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
@@ -100,6 +108,8 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     error FeeOutOfRange(uint256 provided);
     error NotGuardian();
     error NotHarvester();
+    error NotGranter();
+    error IntervalTooShort(uint256 provided, uint256 minimum);
     error DepositTooSmall(uint256 assets, uint256 minimum);
     error TvlCapExceeded(uint256 current, uint256 cap);
     error HarvestTooFrequent(uint256 elapsed, uint256 minimum);
@@ -120,10 +130,11 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @param feeBps_         Fixed fee on gross yield in bps. 50 = Standard, 0 = Paktol.
     /// @param guardian_       Emergency pause address. Cannot be address(0).
     /// @param harvester_      Keeper bot allowed to call harvest(). Cannot be address(0).
+    /// @param granter_        Backend EOA for grantPremiumAccess(). address(0) = disabled.
     /// @param byzantineVault_ Byzantine Finance VaultV2 address. Must accept EURC.
     /// @param maxTvl_            Maximum total assets. 0 = uncapped.
     /// @param premiumThreshold_  Minimum points required to deposit in a REQUIRES_AUTH vault.
-    /// @param requiresAuth_      If true, deposits require points >= premiumThreshold.
+    /// @param requiresAuth_      If true, deposits require active premiumExpiry.
     constructor(
         IERC20  asset_,
         string memory name_,
@@ -134,6 +145,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 feeBps_,
         address guardian_,
         address harvester_,
+        address granter_,
         address byzantineVault_,
         uint256 maxTvl_,
         uint256 premiumThreshold_,
@@ -147,6 +159,9 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (capBps_ == 0 || capBps_ > BPS_DENOMINATOR) revert CapOutOfRange(capBps_);
         if (feeBps_ > FLOOR_BPS) revert FeeOutOfRange(feeBps_);
         if (owner_ == guardian_ || owner_ == harvester_ || guardian_ == harvester_) revert RolesNotSeparated();
+        if (granter_ != address(0)) {
+            if (granter_ == owner_ || granter_ == guardian_ || granter_ == harvester_) revert RolesNotSeparated();
+        }
 
         address byzantineAsset = IERC4626(byzantineVault_).asset();
         if (byzantineAsset != address(asset_)) revert ByzantineVaultAssetMismatch(byzantineAsset, address(asset_));
@@ -156,6 +171,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         FEE_BPS         = feeBps_;
         guardian        = guardian_;
         harvester       = harvester_;
+        granter         = granter_;
         BYZANTINE_VAULT = IERC4626(byzantineVault_);
         MAX_TVL         = maxTvl_;
         REQUIRES_AUTH   = requiresAuth_;
@@ -229,12 +245,11 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /* ─────────────────────── BYZANTINE ROUTING ─────────────────────── */
 
     /// @dev Pushes all idle EURC into Byzantine VaultV2. Called after every deposit/mint.
+    ///      Byzantine's maxDeposit() always returns 0 by design — the real gate check
+    ///      happens inside deposit() itself via canSendAssets / canReceiveShares.
     function _depositToByzantine() internal {
         uint256 amount = IERC20(asset()).balanceOf(address(this));
         if (amount == 0) return;
-        uint256 cap = BYZANTINE_VAULT.maxDeposit(address(this));
-        if (cap == 0) return;
-        if (amount > cap) amount = cap;
         IERC20(asset()).forceApprove(address(BYZANTINE_VAULT), amount);
         BYZANTINE_VAULT.deposit(amount, address(this));
     }
@@ -253,7 +268,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function _executeDeposit(uint256 assets, address receiver) internal returns (uint256) {
-        if (assets < MIN_DEPOSIT) revert DepositTooSmall(assets, MIN_DEPOSIT);
+        if (assets < minDeposit) revert DepositTooSmall(assets, minDeposit);
         uint256 current = totalAssets();
         if (MAX_TVL != 0 && current + assets > MAX_TVL) revert TvlCapExceeded(current, MAX_TVL);
         uint256 shares = super.deposit(assets, receiver);
@@ -294,7 +309,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     ) external whenNotPaused nonReentrant returns (uint256) {
         if (REQUIRES_AUTH && block.timestamp > premiumExpiry[receiver])
             revert PremiumAccessExpired(premiumExpiry[receiver]);
-        if (assets < MIN_DEPOSIT) revert DepositTooSmall(assets, MIN_DEPOSIT);
+        if (assets < minDeposit) revert DepositTooSmall(assets, minDeposit);
         if (IERC20(asset()).allowance(msg.sender, address(this)) < assets) {
             uint256 nonceBefore = IERC20Permit(asset()).nonces(msg.sender);
             try IERC20Permit(asset()).permit(msg.sender, address(this), assets, deadline, v, r, s) { } catch { }
@@ -307,7 +322,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (REQUIRES_AUTH && block.timestamp > premiumExpiry[receiver])
             revert PremiumAccessExpired(premiumExpiry[receiver]);
         uint256 assets = previewMint(shares);
-        if (assets < MIN_DEPOSIT) revert DepositTooSmall(assets, MIN_DEPOSIT);
+        if (assets < minDeposit) revert DepositTooSmall(assets, minDeposit);
         uint256 current = totalAssets();
         if (MAX_TVL != 0 && current + assets > MAX_TVL) revert TvlCapExceeded(current, MAX_TVL);
         uint256 assetsUsed = super.mint(shares, receiver);
@@ -377,7 +392,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (msg.sender != owner() && msg.sender != harvester) revert NotHarvester();
 
         uint256 elapsed = block.timestamp - lastHarvestTimestamp;
-        if (elapsed < MIN_HARVEST_INTERVAL) revert HarvestTooFrequent(elapsed, MIN_HARVEST_INTERVAL);
+        if (elapsed < minHarvestInterval) revert HarvestTooFrequent(elapsed, minHarvestInterval);
 
         uint256 current = totalAssets();
 
@@ -440,9 +455,9 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     /// @notice Grants time-limited access to the premium vault.
-    ///         Backend calls this after verifying the user has enough points.
-    ///         duration is in seconds — e.g. 15 days = 15 * 24 * 3600.
-    function grantPremiumAccess(address user, uint256 duration) external onlyOwner {
+    ///         Callable by owner or granter (backend EOA).
+    function grantPremiumAccess(address user, uint256 duration) external {
+        if (msg.sender != owner() && msg.sender != granter) revert NotGranter();
         if (user == address(0)) revert ZeroAddress("user");
         uint256 expiry = block.timestamp + duration;
         premiumExpiry[user] = expiry;
@@ -454,21 +469,41 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         premiumThreshold = threshold;
     }
 
+    function setGranter(address newGranter) external onlyOwner {
+        if (newGranter != address(0)) {
+            if (newGranter == owner() || newGranter == guardian || newGranter == harvester)
+                revert RolesNotSeparated();
+        }
+        emit GranterChanged(granter, newGranter);
+        granter = newGranter;
+    }
+
+    function setMinHarvestInterval(uint256 newInterval) external onlyOwner {
+        if (newInterval < 1 hours) revert IntervalTooShort(newInterval, 1 hours);
+        emit MinHarvestIntervalUpdated(minHarvestInterval, newInterval);
+        minHarvestInterval = newInterval;
+    }
+
+    function setMinDeposit(uint256 newMinDeposit) external onlyOwner {
+        emit MinDepositUpdated(minDeposit, newMinDeposit);
+        minDeposit = newMinDeposit;
+    }
+
     function transferOwnership(address newOwner) public override onlyOwner {
-        if (newOwner == guardian || newOwner == harvester) revert RolesNotSeparated();
+        if (newOwner == guardian || newOwner == harvester || newOwner == granter) revert RolesNotSeparated();
         super.transferOwnership(newOwner);
     }
 
     function setGuardian(address newGuardian_) external onlyOwner {
         if (newGuardian_ == address(0)) revert ZeroAddress("newGuardian");
-        if (newGuardian_ == owner() || newGuardian_ == harvester) revert RolesNotSeparated();
+        if (newGuardian_ == owner() || newGuardian_ == harvester || newGuardian_ == granter) revert RolesNotSeparated();
         emit GuardianChanged(guardian, newGuardian_);
         guardian = newGuardian_;
     }
 
     function setHarvester(address newHarvester_) external onlyOwner {
         if (newHarvester_ == address(0)) revert ZeroAddress("newHarvester");
-        if (newHarvester_ == owner() || newHarvester_ == guardian) revert RolesNotSeparated();
+        if (newHarvester_ == owner() || newHarvester_ == guardian || newHarvester_ == granter) revert RolesNotSeparated();
         emit HarvesterChanged(harvester, newHarvester_);
         harvester = newHarvester_;
     }
