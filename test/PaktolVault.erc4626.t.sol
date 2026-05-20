@@ -53,7 +53,9 @@ contract PaktolVaultERC4626ComplianceTest is ERC4626Test {
         vm.warp(block.timestamp + vault.WITHDRAWAL_COOLDOWN() + 1);
     }
 
-    /// @dev Simulate yield by minting EURe idle to vault (totalAssets includes idle balance).
+    /// @dev Simulate yield by minting aTokens to the vault — totalAssets() reads
+    ///      ATOKEN.balanceOf(vault) + _idleBalance, so minting underlying to the vault
+    ///      address is a no-op. pool.simulateYield mints aTokens directly.
     ///      Cap gain to current totalAssets so exchange rate never more than doubles —
     ///      this bounds rounding error to ≤ 1 wei per round-trip (matching _delta_ = 1).
     ///      Loss scenarios skipped — Aave loss handling is in PaktolVault.t.sol.
@@ -64,7 +66,7 @@ contract PaktolVaultERC4626ComplianceTest is ERC4626Test {
                 uint256 cap = IERC4626(_vault_).totalAssets();
                 if (cap == 0) { vm.assume(false); }
                 if (gain > cap) gain = cap;
-                try IMockERC20(_underlying_).mint(_vault_, gain) {} catch { vm.assume(false); }
+                pool.simulateYield(_vault_, gain);
             }
         } else {
             vm.assume(false);

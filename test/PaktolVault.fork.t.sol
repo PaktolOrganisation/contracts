@@ -47,7 +47,9 @@ contract PaktolVaultForkTest is Test {
             return;
         }
 
-        vm.createSelectFork(rpc);
+        uint256 forkBlock = vm.envOr("GNOSIS_FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) forkBlock = 39_000_000;
+        vm.createSelectFork(rpc, forkBlock);
 
         vault = new PaktolVault(
             IERC20(EURE), "Paktol EUR", "pkEUR", owner,
