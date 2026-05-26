@@ -46,6 +46,7 @@ contract DeployBaseV2 is Script {
         address treasury  = vm.envAddress("TREASURY");
         address guardian  = vm.envAddress("GUARDIAN");
         address harvester = vm.envAddress("HARVESTER");
+        address granter   = vm.envOr("GRANTER", address(0));
 
         uint256 capBps           = vm.envUint("CAP_BPS");
         uint256 feeBps           = vm.envUint("FEE_BPS");
@@ -80,6 +81,7 @@ contract DeployBaseV2 is Script {
             feeBps,
             guardian,
             harvester,
+            granter,
             byzantineVault,
             maxTvl,
             premiumThreshold,
@@ -125,12 +127,17 @@ contract SeedV2Base is Script {
         address vaultAddr = vm.envAddress("VAULT_ADDRESS");
 
         PaktolVaultV2 vault = PaktolVaultV2(vaultAddr);
-        uint256 seedAmount  = vault.MIN_DEPOSIT();
+        uint256 seedAmount  = vault.minDeposit();
         address asset       = vault.asset();
 
+        address seeder = vm.addr(ownerKey);
         console.log("Seeding", seedAmount, "EURC (raw) into vault...");
 
         vm.startBroadcast(ownerKey);
+        // Si REQUIRES_AUTH, le receiver (0xdEaD) doit être granted avant le seed.
+        if (vault.REQUIRES_AUTH()) {
+            vault.grantPremiumAccess(address(0xdEaD), 1 days);
+        }
         IERC20(asset).approve(vaultAddr, seedAmount);
         vault.deposit(seedAmount, address(0xdEaD));
         vm.stopBroadcast();

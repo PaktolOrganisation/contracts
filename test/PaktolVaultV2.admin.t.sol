@@ -106,6 +106,105 @@ contract PaktolVaultV2AdminTest is PaktolVaultV2Base {
         vaultStd.setHarvester(guardian);
     }
 
+    // F-14: setGuardian rejects granter address.
+    function test_f14_setGuardian_revert_equalsGranter() public {
+        vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setGuardian(granter);
+    }
+
+    // F-14: setHarvester rejects granter address.
+    function test_f14_setHarvester_revert_equalsGranter() public {
+        vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setHarvester(granter);
+    }
+
+    /* ──────────────────── GRANTER ──────────────────────────────────── */
+
+    function test_setGranter() public {
+        address newGranter = makeAddr("newGranter");
+        vm.prank(owner);
+        vaultStd.setGranter(newGranter);
+        assertEq(vaultStd.granter(), newGranter);
+    }
+
+    function test_setGranter_zero_disables() public {
+        vm.prank(owner);
+        vaultStd.setGranter(address(0));
+        assertEq(vaultStd.granter(), address(0));
+    }
+
+    function test_setGranter_revert_unauthorized() public {
+        vm.expectRevert();
+        vm.prank(user);
+        vaultStd.setGranter(makeAddr("x"));
+    }
+
+    function test_setGranter_revert_equalsOwner() public {
+        vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setGranter(owner);
+    }
+
+    function test_setGranter_revert_equalsGuardian() public {
+        vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setGranter(guardian);
+    }
+
+    function test_setGranter_revert_equalsHarvester() public {
+        vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.setGranter(harvester);
+    }
+
+    function test_granter_can_grantPremiumAccess() public {
+        vm.prank(granter);
+        vaultPkt.grantPremiumAccess(user, 7 days);
+        assertGt(vaultPkt.premiumExpiry(user), block.timestamp);
+    }
+
+    function test_randomUser_cannot_grantPremiumAccess() public {
+        vm.expectRevert(PaktolVaultV2.NotGranter.selector);
+        vm.prank(user);
+        vaultPkt.grantPremiumAccess(user2, 7 days);
+    }
+
+    /* ─────────── setMinHarvestInterval / setMinDeposit ─────────────── */
+
+    function test_setMinHarvestInterval() public {
+        vm.prank(owner);
+        vaultStd.setMinHarvestInterval(2 hours);
+        assertEq(vaultStd.minHarvestInterval(), 2 hours);
+    }
+
+    function test_setMinHarvestInterval_revert_tooShort() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(PaktolVaultV2.IntervalTooShort.selector, 30 minutes, 1 hours)
+        );
+        vm.prank(owner);
+        vaultStd.setMinHarvestInterval(30 minutes);
+    }
+
+    function test_setMinHarvestInterval_revert_unauthorized() public {
+        vm.expectRevert();
+        vm.prank(user);
+        vaultStd.setMinHarvestInterval(2 hours);
+    }
+
+    function test_setMinDeposit() public {
+        vm.prank(owner);
+        vaultStd.setMinDeposit(1e6);
+        assertEq(vaultStd.minDeposit(), 1e6);
+    }
+
+    function test_setMinDeposit_revert_unauthorized() public {
+        vm.expectRevert();
+        vm.prank(user);
+        vaultStd.setMinDeposit(1e6);
+    }
+
     /* ─────────── M-2: transferOwnership role separation ────────────── */
 
     function test_m2_transferOwnership_revert_toGuardian() public {
@@ -118,6 +217,12 @@ contract PaktolVaultV2AdminTest is PaktolVaultV2Base {
         vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
         vm.prank(owner);
         vaultStd.transferOwnership(harvester);
+    }
+
+    function test_m2_transferOwnership_revert_toGranter() public {
+        vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
+        vm.prank(owner);
+        vaultStd.transferOwnership(granter);
     }
 
     function test_m2_transferOwnership_ok_toNewAddress() public {

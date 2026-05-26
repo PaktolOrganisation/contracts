@@ -54,6 +54,7 @@ contract PaktolVaultV2Base is Test {
     address internal treasury  = makeAddr("treasury");
     address internal guardian  = makeAddr("guardian");
     address internal harvester = makeAddr("harvester");
+    address internal granter   = makeAddr("granter");
     address internal user      = makeAddr("user");
     address internal user2     = makeAddr("user2");
 
@@ -77,12 +78,12 @@ contract PaktolVaultV2Base is Test {
         vaultStd = new PaktolVaultV2(
             IERC20(address(eurc)), "Paktol Standard", "pkEURC-S",
             owner, treasury, CAP_STD, FEE_STD, guardian, harvester,
-            address(mockStd), 0, 0, false
+            granter, address(mockStd), 0, 0, false
         );
         vaultPkt = new PaktolVaultV2(
             IERC20(address(eurc)), "Paktol Subscription", "pkEURC-P",
             owner, treasury, CAP_PKT, FEE_PKT, guardian, harvester,
-            address(mockPkt), 0, PREMIUM_THRESHOLD, true
+            granter, address(mockPkt), 0, PREMIUM_THRESHOLD, true
         );
 
         eurc.mint(user,  USER_BALANCE);

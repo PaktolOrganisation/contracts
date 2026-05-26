@@ -44,13 +44,13 @@ contract PaktolVaultV2PermitTest is PaktolVaultV2Base {
     }
 
     function test_depositWithPermit_tooSmall() public {
-        uint256 tiny = vaultStd.MIN_DEPOSIT() - 1;
+        uint256 tiny = vaultStd.minDeposit() - 1;
         eurc.mint(permitUser, tiny);
         uint256 deadline = block.timestamp + 1 hours;
         (uint8 v, bytes32 r, bytes32 s) = _signPermit(address(vaultStd), permitUser, PERMIT_USER_KEY, tiny, deadline);
 
         vm.prank(permitUser);
-        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.DepositTooSmall.selector, tiny, vaultStd.MIN_DEPOSIT()));
+        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.DepositTooSmall.selector, tiny, vaultStd.minDeposit()));
         vaultStd.depositWithPermit(tiny, permitUser, deadline, v, r, s);
     }
 

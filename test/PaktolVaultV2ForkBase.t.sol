@@ -54,6 +54,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
             "Paktol Standard EURC",  "pkEURC-S",
             owner, treasury, CAP_BPS, FEE_BPS,
             guardian, harvester,
+            address(0),            // no granter
             BYZANTINE_EUR,
             0, 0, false            // no TVL cap, no threshold, open
         );
@@ -63,6 +64,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
             "Paktol Premium EURC",  "pkEURC-P",
             owner, treasury, CAP_BPS, FEE_BPS,
             guardian, harvester,
+            address(0),            // no granter
             BYZANTINE_EUR,
             0, 100, true           // no TVL cap, threshold=100, gated
         );
@@ -80,7 +82,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
     /* ─────────────── helpers ───────────────────────────────────────── */
 
     function _seed(PaktolVaultV2 vault_) internal {
-        uint256 min = vault_.MIN_DEPOSIT();
+        uint256 min = vault_.minDeposit();
         deal(EURC_BASE, owner, min);
         vm.startPrank(owner);
         if (vault_.REQUIRES_AUTH()) vault_.grantPremiumAccess(address(0xdEaD), 365 days);
@@ -119,7 +121,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
 
     function test_fork_base_deposit_routes_to_byzantine() public {
         uint256 shares = _deposit(vaultStd, user, DEPOSIT);
-        uint256 min = vaultStd.MIN_DEPOSIT();
+        uint256 min = vaultStd.minDeposit();
 
         assertGt(shares, 0, "vault shares minted");
         // totalAssets counts idle EURC + Byzantine position — correct either way.
@@ -133,7 +135,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
     }
 
     function test_fork_base_totalAssets_reflects_byzantine() public {
-        uint256 min = vaultStd.MIN_DEPOSIT();
+        uint256 min = vaultStd.minDeposit();
         uint256 expected = DEPOSIT + min; // user + dead shares
 
         _deposit(vaultStd, user, DEPOSIT);
@@ -225,7 +227,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
             vm.expectRevert(abi.encodeWithSelector(
                 PaktolVaultV2.HarvestTooFrequent.selector,
                 0,
-                vaultStd.MIN_HARVEST_INTERVAL()
+                vaultStd.minHarvestInterval()
             ));
             vaultStd.harvest();
         }
@@ -250,7 +252,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
 
         uint256 shares = _deposit(vaultPkt, user, DEPOSIT);
         assertGt(shares, 0, "shares minted");
-        assertApproxEqAbs(vaultPkt.totalAssets(), DEPOSIT + vaultPkt.MIN_DEPOSIT(), 1e3, "totalAssets correct");
+        assertApproxEqAbs(vaultPkt.totalAssets(), DEPOSIT + vaultPkt.minDeposit(), 1e3, "totalAssets correct");
     }
 
     function test_fork_base_pkt_access_expires() public {
@@ -299,7 +301,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
         uint256 shares = vaultStd.depositWithPermit(DEPOSIT, permitUser, deadline, v, r, s);
 
         assertGt(shares, 0, "shares minted");
-        assertApproxEqAbs(vaultStd.totalAssets(), DEPOSIT + vaultStd.MIN_DEPOSIT(), 1e3, "totalAssets correct");
+        assertApproxEqAbs(vaultStd.totalAssets(), DEPOSIT + vaultStd.minDeposit(), 1e3, "totalAssets correct");
     }
 
     /* ══════════════════════════════════════════════════════════════════
@@ -371,6 +373,145 @@ contract PaktolVaultV2ForkBaseTest is Test {
         // But treasury IS exempt from cooldown check (owner_ != TREASURY).
         // maxRedeem should be > 0 immediately.
         assertGt(vaultStd.maxRedeem(treasury), 0, "treasury exempt from 4h cooldown");
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       9. GRANTER ROLE
+       ══════════════════════════════════════════════════════════════════ */
+
+    function test_fork_granter_grants_access() public {
+        address backendEOA = makeAddr("backendEOA");
+        vm.prank(owner);
+        vaultPkt.setGranter(backendEOA);
+
+        vm.prank(backendEOA);
+        vaultPkt.grantPremiumAccess(user, 30 days);
+
+        assertGt(vaultPkt.premiumExpiry(user), block.timestamp, "access granted");
+
+        uint256 shares = _deposit(vaultPkt, user, DEPOSIT);
+        assertGt(shares, 0, "user can deposit after granter grant");
+    }
+
+    function test_fork_granter_cannot_harvest() public {
+        address backendEOA = makeAddr("backendEOA");
+        vm.prank(owner);
+        vaultPkt.setGranter(backendEOA);
+
+        // Grant access first, then deposit
+        vm.prank(backendEOA);
+        vaultPkt.grantPremiumAccess(user, 30 days);
+        _deposit(vaultPkt, user, DEPOSIT);
+        _warp(2 days);
+
+        vm.prank(backendEOA);
+        vm.expectRevert(PaktolVaultV2.NotHarvester.selector);
+        vaultPkt.harvest();
+    }
+
+    function test_fork_granter_cannot_pause() public {
+        address backendEOA = makeAddr("backendEOA");
+        vm.prank(owner);
+        vaultPkt.setGranter(backendEOA);
+
+        vm.prank(backendEOA);
+        vm.expectRevert(PaktolVaultV2.NotGuardian.selector);
+        vaultPkt.pause();
+    }
+
+    function test_fork_granter_replaced_by_owner() public {
+        address backendEOA  = makeAddr("backendEOA");
+        address newBackend  = makeAddr("newBackend");
+
+        vm.startPrank(owner);
+        vaultPkt.setGranter(backendEOA);
+        vaultPkt.setGranter(newBackend);
+        vm.stopPrank();
+
+        // old granter can no longer grant
+        vm.prank(backendEOA);
+        vm.expectRevert(PaktolVaultV2.NotGranter.selector);
+        vaultPkt.grantPremiumAccess(user, 7 days);
+
+        // new granter works
+        vm.prank(newBackend);
+        vaultPkt.grantPremiumAccess(user, 7 days);
+        assertGt(vaultPkt.premiumExpiry(user), block.timestamp);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       10. MUTABLE PARAMS
+       ══════════════════════════════════════════════════════════════════ */
+
+    function test_fork_setMinHarvestInterval_respected() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        // Réduire l'intervalle à 1h
+        vm.prank(owner);
+        vaultStd.setMinHarvestInterval(1 hours);
+
+        // Harvest après 30min → revert
+        _warp(30 minutes);
+        vm.prank(harvester);
+        vm.expectRevert();
+        vaultStd.harvest();
+
+        // Harvest après 1h → ok
+        _warp(31 minutes);
+        vm.prank(harvester);
+        vaultStd.harvest();
+    }
+
+    function test_fork_setMinHarvestInterval_revert_below_1h() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.IntervalTooShort.selector, 30 minutes, 1 hours));
+        vaultStd.setMinHarvestInterval(30 minutes);
+    }
+
+    function test_fork_setMinDeposit_respected() public {
+        vm.prank(owner);
+        vaultStd.setMinDeposit(10e6); // 10 EURC minimum
+
+        deal(EURC_BASE, user, 5e6);
+        vm.startPrank(user);
+        IERC20(EURC_BASE).approve(address(vaultStd), 5e6);
+        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.DepositTooSmall.selector, 5e6, 10e6));
+        vaultStd.deposit(5e6, user);
+        vm.stopPrank();
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       11. FULL LIFECYCLE (KYC → GRANT → DEPOSIT → HARVEST → WITHDRAW)
+       ══════════════════════════════════════════════════════════════════ */
+
+    function test_fork_full_lifecycle() public {
+        address backendEOA = makeAddr("backendEOA");
+
+        // Setup granter (done once at deploy by Safe)
+        vm.prank(owner);
+        vaultPkt.setGranter(backendEOA);
+
+        // KYC validé → backend grant l'accès 90 jours
+        vm.prank(backendEOA);
+        vaultPkt.grantPremiumAccess(user, 90 days);
+        assertGt(vaultPkt.premiumExpiry(user), block.timestamp, "access granted");
+
+        // Dépôt
+        uint256 shares = _deposit(vaultPkt, user, DEPOSIT);
+        assertGt(shares, 0, "shares minted");
+
+        // Harvest après 1 jour
+        _warp(2 days);
+        vm.prank(harvester);
+        vaultPkt.harvest();
+
+        // Retrait après cooldown
+        _warp(3 hours); // cooldown restant
+        uint256 balBefore = IERC20(EURC_BASE).balanceOf(user);
+        vm.prank(user);
+        vaultPkt.redeem(shares, user, user);
+
+        assertApproxEqAbs(IERC20(EURC_BASE).balanceOf(user), balBefore + DEPOSIT, 1e3, "user gets deposit back");
     }
 
     /* ─────────────── permit helper ─────────────────────────────────── */

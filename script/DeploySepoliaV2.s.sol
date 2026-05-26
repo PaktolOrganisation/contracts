@@ -14,6 +14,7 @@ contract DeploySepoliaV2 is Script {
         address treasury  = vm.envAddress("TREASURY");
         address guardian  = vm.envAddress("GUARDIAN");
         address harvester = vm.envAddress("HARVESTER");
+        address granter   = vm.envOr("GRANTER", address(0));
         uint256 capBps           = vm.envUint("CAP_BPS");
         uint256 feeBps           = vm.envUint("FEE_BPS");
         uint256 maxTvl           = vm.envOr("MAX_TVL", uint256(0));
@@ -40,6 +41,7 @@ contract DeploySepoliaV2 is Script {
             feeBps,
             guardian,
             harvester,
+            granter,
             address(byzantineVault),
             maxTvl,
             premiumThreshold,
@@ -73,7 +75,7 @@ contract SeedV2 is Script {
         address vaultAddr = vm.envAddress("VAULT_ADDRESS");
 
         PaktolVaultV2 vault = PaktolVaultV2(vaultAddr);
-        uint256 seedAmount  = vault.MIN_DEPOSIT();
+        uint256 seedAmount  = vault.minDeposit();
         address asset       = vault.asset();
 
         vm.startBroadcast(ownerKey);

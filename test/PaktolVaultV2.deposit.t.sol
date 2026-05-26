@@ -22,11 +22,11 @@ contract PaktolVaultV2DepositTest is PaktolVaultV2Base {
     }
 
     function test_deposit_revert_tooSmall() public {
-        uint256 tiny = vaultStd.MIN_DEPOSIT() - 1;
+        uint256 tiny = vaultStd.minDeposit() - 1;
         eurc.mint(user, tiny);
         vm.startPrank(user);
         eurc.approve(address(vaultStd), tiny);
-        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.DepositTooSmall.selector, tiny, vaultStd.MIN_DEPOSIT()));
+        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.DepositTooSmall.selector, tiny, vaultStd.minDeposit()));
         vaultStd.deposit(tiny, user);
         vm.stopPrank();
     }
@@ -46,7 +46,7 @@ contract PaktolVaultV2DepositTest is PaktolVaultV2Base {
     function test_f19_depositUpToCap_full_when_under_cap() public {
         PaktolVaultV2 capped = new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, address(mockStd), 2_000e6, 0, false
+            guardian, harvester, address(0), address(mockStd), 2_000e6, 0, false
         );
         eurc.mint(user, 1_000e6);
         vm.startPrank(user);
@@ -62,7 +62,7 @@ contract PaktolVaultV2DepositTest is PaktolVaultV2Base {
         uint256 cap = 1_500e6;
         PaktolVaultV2 capped = new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, address(mockStd), cap, 0, false
+            guardian, harvester, address(0), address(mockStd), cap, 0, false
         );
         eurc.mint(user, 1_000e6);
         vm.startPrank(user);
@@ -87,7 +87,7 @@ contract PaktolVaultV2DepositTest is PaktolVaultV2Base {
         uint256 cap = 1_000e6;
         PaktolVaultV2 capped = new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, address(mockStd), cap, 0, false
+            guardian, harvester, address(0), address(mockStd), cap, 0, false
         );
         eurc.mint(user, cap);
         vm.startPrank(user);
@@ -111,7 +111,7 @@ contract PaktolVaultV2DepositTest is PaktolVaultV2Base {
         uint256 cap = 1_000e6;
         PaktolVaultV2 capped = new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, address(mockStd), cap, 0, false
+            guardian, harvester, address(0), address(mockStd), cap, 0, false
         );
         eurc.mint(user, cap + 1e6);
         vm.startPrank(user);

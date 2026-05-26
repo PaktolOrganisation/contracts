@@ -176,12 +176,12 @@ contract PaktolVaultV2HarvestTest is PaktolVaultV2Base {
     function test_harvest_revert_tooFrequent() public {
         _deposit(vaultStd, user, DEPOSIT);
         mockStd.simulateYield(40e6);
-        _warp(vaultStd.MIN_HARVEST_INTERVAL() - 1);
+        _warp(vaultStd.minHarvestInterval() - 1);
 
         vm.expectRevert(abi.encodeWithSelector(
             PaktolVaultV2.HarvestTooFrequent.selector,
-            vaultStd.MIN_HARVEST_INTERVAL() - 1,
-            vaultStd.MIN_HARVEST_INTERVAL()
+            vaultStd.minHarvestInterval() - 1,
+            vaultStd.minHarvestInterval()
         ));
         vm.prank(harvester);
         vaultStd.harvest();
@@ -269,7 +269,7 @@ contract PaktolVaultV2HarvestTest is PaktolVaultV2Base {
     /* ──────────────────────────── FUZZ ─────────────────────────────── */
 
     function testFuzz_deposit_withdraw_roundtrip(uint256 amount) public {
-        amount = bound(amount, vaultStd.MIN_DEPOSIT(), 1_000_000e6);
+        amount = bound(amount, vaultStd.minDeposit(), 1_000_000e6);
 
         uint256 shares = _deposit(vaultStd, user, amount);
         assertApproxEqAbs(vaultStd.totalAssets(), amount, 1e3);
