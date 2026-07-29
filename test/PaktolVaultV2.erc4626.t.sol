@@ -38,7 +38,7 @@ contract PaktolVaultV2ERC4626ComplianceTest is ERC4626Test {
             OzIERC20(address(eurc)), "Paktol Standard", "pkEURC-S",
             owner, treasury, CAP_BPS, FEE_BPS,
             guardian, harvester, address(0),
-            address(byz), 0, 0, false
+            address(byz), 0, false
         );
 
         _underlying_     = address(eurc);

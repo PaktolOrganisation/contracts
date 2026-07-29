@@ -19,7 +19,6 @@ import "../src/PaktolVaultV2.sol";
 ///        BYZANTINE_VAULT_ADDR   which Byzantine vault to use (see constants below)
 ///      Optional:
 ///        MAX_TVL                max TVL in EURC raw units (0 = unlimited)
-///        PREMIUM_THRESHOLD      points threshold for premium display (0 = none)
 ///        REQUIRES_AUTH          true if vault requires grantPremiumAccess (default false)
 ///
 ///      Byzantine vault options (Base Mainnet):
@@ -51,7 +50,6 @@ contract DeployBaseV2 is Script {
         uint256 capBps           = vm.envUint("CAP_BPS");
         uint256 feeBps           = vm.envUint("FEE_BPS");
         uint256 maxTvl           = vm.envOr("MAX_TVL", uint256(0));
-        uint256 premiumThreshold = vm.envOr("PREMIUM_THRESHOLD", uint256(0));
         bool    requiresAuth     = vm.envOr("REQUIRES_AUTH", false);
 
         string memory name   = vm.envString("VAULT_NAME");
@@ -84,7 +82,6 @@ contract DeployBaseV2 is Script {
             granter,
             byzantineVault,
             maxTvl,
-            premiumThreshold,
             requiresAuth
         );
 

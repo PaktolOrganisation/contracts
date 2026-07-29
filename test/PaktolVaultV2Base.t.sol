@@ -48,7 +48,7 @@ contract PaktolVaultV2Base is Test {
     MockByzantineVault   internal mockStd;
     MockByzantineVault   internal mockPkt;
     PaktolVaultV2        internal vaultStd;  // Standard — FEE 0.5%, CAP 3.5%, open
-    PaktolVaultV2        internal vaultPkt;  // Premium  — FEE 0.5%, CAP 5%, points-gated
+    PaktolVaultV2        internal vaultPkt;  // Premium  — FEE 0.5%, CAP 5%, backend-authorized (REQUIRES_AUTH)
 
     address internal owner     = makeAddr("owner");
     address internal treasury  = makeAddr("treasury");
@@ -65,8 +65,6 @@ contract PaktolVaultV2Base is Test {
     uint256 constant FEE_STD = 50;
     uint256 constant FEE_PKT = 50;
 
-    uint256 constant PREMIUM_THRESHOLD = 100;
-
     uint256 constant DEPOSIT      = 1_000e6;
     uint256 constant USER_BALANCE = 10_000e6;
 
@@ -78,12 +76,12 @@ contract PaktolVaultV2Base is Test {
         vaultStd = new PaktolVaultV2(
             IERC20(address(eurc)), "Paktol Standard", "pkEURC-S",
             owner, treasury, CAP_STD, FEE_STD, guardian, harvester,
-            granter, address(mockStd), 0, 0, false
+            granter, address(mockStd), 0, false
         );
         vaultPkt = new PaktolVaultV2(
             IERC20(address(eurc)), "Paktol Subscription", "pkEURC-P",
             owner, treasury, CAP_PKT, FEE_PKT, guardian, harvester,
-            granter, address(mockPkt), 0, PREMIUM_THRESHOLD, true
+            granter, address(mockPkt), 0, true
         );
 
         eurc.mint(user,  USER_BALANCE);

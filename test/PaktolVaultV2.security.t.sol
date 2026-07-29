@@ -136,7 +136,7 @@ contract PaktolVaultV2SecurityTest is PaktolVaultV2Base {
             IERC20(address(reurc)), "R", "R",
             owner, treasury, 350, 50,
             guardian, harvester, address(0),
-            address(rbyz), 0, 0, false
+            address(rbyz), 0, false
         );
 
         reurc.setTarget(address(rvault));
@@ -165,7 +165,7 @@ contract PaktolVaultV2SecurityTest is PaktolVaultV2Base {
             IERC20(address(eurc)), "R", "R",
             owner, treasury, 350, 50,
             guardian, harvester, address(0),
-            address(rbyz), 0, 0, false
+            address(rbyz), 0, false
         );
 
         rbyz.setPaktolVault(address(rvault));
@@ -255,7 +255,7 @@ contract PaktolVaultV2SecurityTest is PaktolVaultV2Base {
             IERC20(address(eurc)), "x", "x",
             owner, treasury, 350, 50,
             guardian, harvester, address(0),
-            address(mockPkt), cap, 0, true
+            address(mockPkt), cap, true
         );
 
         // Without access — must revert
@@ -285,7 +285,7 @@ contract PaktolVaultV2SecurityTest is PaktolVaultV2Base {
             IERC20(address(eurc)), "x", "x",
             owner, treasury, 350, 50,
             guardian, harvester, address(0),
-            address(mockStd), 0, 0, false
+            address(mockStd), 0, false
         );
 
         eurc.mint(owner, 1e3);

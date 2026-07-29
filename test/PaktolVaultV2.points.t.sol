@@ -5,62 +5,6 @@ import "./PaktolVaultV2Base.t.sol";
 
 contract PaktolVaultV2PointsTest is PaktolVaultV2Base {
 
-    /* ─────────────────── setPoints ─────────────────────────────────── */
-
-    function test_setPoints_byOwner() public {
-        vm.prank(owner);
-        vaultPkt.setPoints(user, 1000);
-        assertEq(vaultPkt.points(user), 1000);
-    }
-
-    function test_setPoints_revert_unauthorized() public {
-        vm.expectRevert();
-        vm.prank(user);
-        vaultPkt.setPoints(user, 1000);
-    }
-
-    function test_setPoints_revert_zeroAddress() public {
-        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.ZeroAddress.selector, "user"));
-        vm.prank(owner);
-        vaultPkt.setPoints(address(0), 1000);
-    }
-
-    function test_setPoints_emitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit PaktolVaultV2.PointsUpdated(user, 1000);
-        vm.prank(owner);
-        vaultPkt.setPoints(user, 1000);
-    }
-
-    function test_setPoints_overwrite() public {
-        vm.startPrank(owner);
-        vaultPkt.setPoints(user, 500);
-        vaultPkt.setPoints(user, 1000);
-        vm.stopPrank();
-        assertEq(vaultPkt.points(user), 1000);
-    }
-
-    /* ─────────────────── setPremiumThreshold ───────────────────────── */
-
-    function test_setPremiumThreshold_byOwner() public {
-        vm.prank(owner);
-        vaultPkt.setPremiumThreshold(500);
-        assertEq(vaultPkt.premiumThreshold(), 500);
-    }
-
-    function test_setPremiumThreshold_revert_unauthorized() public {
-        vm.expectRevert();
-        vm.prank(user);
-        vaultPkt.setPremiumThreshold(500);
-    }
-
-    function test_setPremiumThreshold_emitsEvent() public {
-        vm.expectEmit(false, false, false, true);
-        emit PaktolVaultV2.PremiumThresholdUpdated(PREMIUM_THRESHOLD, 500);
-        vm.prank(owner);
-        vaultPkt.setPremiumThreshold(500);
-    }
-
     /* ─────────────────── grantPremiumAccess ────────────────────────── */
 
     function test_grantPremiumAccess_byOwner() public {

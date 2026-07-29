@@ -56,7 +56,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
             guardian, harvester,
             address(0),            // no granter
             BYZANTINE_EUR,
-            0, 0, false            // no TVL cap, no threshold, open
+            0, false               // no TVL cap, open
         );
 
         vaultPkt = new PaktolVaultV2(
@@ -66,7 +66,7 @@ contract PaktolVaultV2ForkBaseTest is Test {
             guardian, harvester,
             address(0),            // no granter
             BYZANTINE_EUR,
-            0, 100, true           // no TVL cap, threshold=100, gated
+            0, true                // no TVL cap, gated (REQUIRES_AUTH)
         );
 
         // Fund users with real EURC via deal() (modifies storage slot directly)

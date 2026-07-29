@@ -14,8 +14,6 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         assertEq(vaultStd.harvester(), harvester);
         assertEq(vaultStd.granter(),   granter);
         assertFalse(vaultStd.REQUIRES_AUTH());
-        assertEq(vaultStd.premiumThreshold(), 0);
-        assertEq(vaultPkt.premiumThreshold(), PREMIUM_THRESHOLD);
 
         assertEq(vaultPkt.CAP_BPS(), CAP_PKT);
         assertEq(vaultPkt.FEE_BPS(), FEE_PKT);
@@ -26,7 +24,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.ZeroAddress.selector, "asset"));
         new PaktolVaultV2(
             IERC20(address(0)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
     }
 
@@ -34,7 +32,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.ZeroAddress.selector, "treasury"));
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, address(0), CAP_STD, FEE_STD,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
     }
 
@@ -42,7 +40,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.ZeroAddress.selector, "byzantineVault"));
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, address(0), address(0), 0, 0, false
+            guardian, harvester, address(0), address(0), 0, false
         );
     }
 
@@ -55,7 +53,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         ));
         new PaktolVaultV2(
             IERC20(address(other)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
     }
 
@@ -63,7 +61,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.CapOutOfRange.selector, 0));
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, 0, FEE_STD,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
     }
 
@@ -71,7 +69,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.CapOutOfRange.selector, 10_001));
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, 10_001, FEE_STD,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
     }
 
@@ -79,7 +77,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.FeeOutOfRange.selector, 10_000));
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, 10_000,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
     }
 
@@ -88,14 +86,14 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.FeeOutOfRange.selector, 201));
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, 201,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
     }
 
     function test_f21_constructor_accepts_fee_at_floor_bps() public {
         PaktolVaultV2 v = new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, 200,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
         assertEq(v.FEE_BPS(), 200);
     }
@@ -105,7 +103,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            owner, harvester, address(0), address(mockStd), 0, 0, false
+            owner, harvester, address(0), address(mockStd), 0, false
         );
     }
 
@@ -113,7 +111,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, owner, address(0), address(mockStd), 0, 0, false
+            guardian, owner, address(0), address(mockStd), 0, false
         );
     }
 
@@ -121,7 +119,7 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, guardian, address(0), address(mockStd), 0, 0, false
+            guardian, guardian, address(0), address(mockStd), 0, false
         );
     }
 
@@ -129,14 +127,14 @@ contract PaktolVaultV2ConstructorTest is PaktolVaultV2Base {
         vm.expectRevert(PaktolVaultV2.RolesNotSeparated.selector);
         new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, owner, address(mockStd), 0, 0, false
+            guardian, harvester, owner, address(mockStd), 0, false
         );
     }
 
     function test_constructor_granter_zero_allowed() public {
         PaktolVaultV2 v = new PaktolVaultV2(
             IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
-            guardian, harvester, address(0), address(mockStd), 0, 0, false
+            guardian, harvester, address(0), address(mockStd), 0, false
         );
         assertEq(v.granter(), address(0));
     }

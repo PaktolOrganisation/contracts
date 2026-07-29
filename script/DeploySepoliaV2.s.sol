@@ -18,7 +18,6 @@ contract DeploySepoliaV2 is Script {
         uint256 capBps           = vm.envUint("CAP_BPS");
         uint256 feeBps           = vm.envUint("FEE_BPS");
         uint256 maxTvl           = vm.envOr("MAX_TVL", uint256(0));
-        uint256 premiumThreshold = vm.envOr("PREMIUM_THRESHOLD", uint256(0));
         bool requiresAuth        = vm.envOr("REQUIRES_AUTH", false);
         string memory name   = vm.envString("VAULT_NAME");
         string memory symbol = vm.envString("VAULT_SYMBOL");
@@ -44,7 +43,6 @@ contract DeploySepoliaV2 is Script {
             granter,
             address(byzantineVault),
             maxTvl,
-            premiumThreshold,
             requiresAuth
         );
 

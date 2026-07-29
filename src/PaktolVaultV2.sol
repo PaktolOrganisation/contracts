@@ -21,12 +21,12 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 ///           - User net yield capped at 3.5% per year.
 ///           - AUM fee + surplus above cap → treasury.
 ///
-///         Premium — points tier or legal entity (FEE_BPS = 50, CAP_BPS = 500):
+///         Premium — backend-authorized access (FEE_BPS = 50, CAP_BPS = 500):
 ///           - 0.5% annual AUM fee on total capital, pro-rated per harvest.
 ///           - Fee floor at 2% APY: below that, fee scales down with yield.
 ///           - User net yield capped at 5% per year.
 ///           - AUM fee + surplus above cap → treasury.
-///           - Deposits gated by points: user must hold >= premiumThreshold points.
+///           - Deposits gated by premiumExpiry, granted off-chain via grantPremiumAccess().
 ///
 ///         Harvest formula (unified, covers both plans):
 ///           maxAumFee  = lastTotalAssets × FEE_BPS × elapsed / (BPS_DENOMINATOR × SECONDS_PER_YEAR)
@@ -76,8 +76,6 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public lastTreasuryAssets;
     uint256 public lastHarvestTimestamp;
     mapping(address => uint256) public depositTimestamp;
-    mapping(address => uint256) public points;
-    uint256 public premiumThreshold;
     mapping(address => uint256) public premiumExpiry;
     address public guardian;
     address public harvester;
@@ -96,8 +94,6 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     event MinHarvestIntervalUpdated(uint256 oldInterval, uint256 newInterval);
     event MinDepositUpdated(uint256 oldMinDeposit, uint256 newMinDeposit);
     event EmergencyExitV2(uint256 amount, uint256 timestamp);
-    event PointsUpdated(address indexed user, uint256 amount);
-    event PremiumThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
     event PremiumAccessGranted(address indexed user, uint256 expiry);
 
     /* ───────────────────────────── ERRORS ──────────────────────────── */
@@ -114,7 +110,6 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     error TvlCapExceeded(uint256 current, uint256 cap);
     error HarvestTooFrequent(uint256 elapsed, uint256 minimum);
     error InsufficientAllowance();
-    error NotEnoughPoints(uint256 current, uint256 required);
     error PremiumAccessExpired(uint256 expiredAt);
     error WithdrawalCooldown(uint256 availableAt);
     error RolesNotSeparated();
@@ -133,7 +128,6 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     /// @param granter_        Backend EOA for grantPremiumAccess(). address(0) = disabled.
     /// @param byzantineVault_ Byzantine Finance VaultV2 address. Must accept EURC.
     /// @param maxTvl_            Maximum total assets. 0 = uncapped.
-    /// @param premiumThreshold_  Minimum points required to deposit in a REQUIRES_AUTH vault.
     /// @param requiresAuth_      If true, deposits require active premiumExpiry.
     constructor(
         IERC20  asset_,
@@ -148,7 +142,6 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         address granter_,
         address byzantineVault_,
         uint256 maxTvl_,
-        uint256 premiumThreshold_,
         bool    requiresAuth_
     ) ERC4626(asset_) ERC20(name_, symbol_) Ownable(owner_) {
         if (address(asset_) == address(0)) revert ZeroAddress("asset");
@@ -175,7 +168,6 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         BYZANTINE_VAULT = IERC4626(byzantineVault_);
         MAX_TVL         = maxTvl_;
         REQUIRES_AUTH   = requiresAuth_;
-        premiumThreshold = premiumThreshold_;
 
         lastHarvestTimestamp = block.timestamp;
     }
@@ -448,12 +440,6 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ───────────────────────────── GUARDIAN ────────────────────────── */
 
-    function setPoints(address user, uint256 amount) external onlyOwner {
-        if (user == address(0)) revert ZeroAddress("user");
-        points[user] = amount;
-        emit PointsUpdated(user, amount);
-    }
-
     /// @notice Grants time-limited access to the premium vault.
     ///         Callable by owner or granter (backend EOA).
     function grantPremiumAccess(address user, uint256 duration) external {
@@ -462,11 +448,6 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 expiry = block.timestamp + duration;
         premiumExpiry[user] = expiry;
         emit PremiumAccessGranted(user, expiry);
-    }
-
-    function setPremiumThreshold(uint256 threshold) external onlyOwner {
-        emit PremiumThresholdUpdated(premiumThreshold, threshold);
-        premiumThreshold = threshold;
     }
 
     function setGranter(address newGranter) external onlyOwner {
