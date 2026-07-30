@@ -382,10 +382,15 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         return assets;
     }
 
+    /// @dev Propagates depositTimestamp on share transfers only when the recipient
+    ///      held zero balance before this transfer (balanceOf(to) == amount after
+    ///      super._update means `to` started at 0). This still prevents cooldown
+    ///      bypass via a fresh wallet (F-09), but a dust transfer to an address that
+    ///      already holds shares can no longer forcibly extend its cooldown (F-01).
     function _update(address from, address to, uint256 amount) internal override {
         super._update(from, to, amount);
         if (from != address(0) && to != address(0)) {
-            if (depositTimestamp[from] > depositTimestamp[to]) {
+            if (balanceOf(to) == amount) {
                 depositTimestamp[to] = depositTimestamp[from];
             }
         }

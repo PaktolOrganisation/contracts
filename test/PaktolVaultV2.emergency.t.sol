@@ -237,6 +237,63 @@ contract PaktolVaultV2EmergencyTest is PaktolVaultV2Base {
         vaultStd.redeem(shares, attacker2, attacker2);
     }
 
+    /* ─────────────── F-01: dust-transfer cooldown griefing ───────────── */
+
+    // A victim with an existing, already-expired cooldown must not have it
+    // forcibly extended by an unsolicited dust transfer from an attacker.
+    function test_f01_dust_transfer_does_not_extend_existing_victim_cooldown() public {
+        uint256 victimShares = _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN()); // victim's cooldown has expired
+
+        address attacker = makeAddr("attacker");
+        eurc.mint(attacker, 1e3);
+        vm.startPrank(attacker);
+        eurc.approve(address(vaultStd), 1e3);
+        uint256 attackerShares = vaultStd.deposit(1e3, attacker); // fresh, un-expired cooldown
+        vaultStd.transfer(user, 1); // dust griefing attempt
+        vm.stopPrank();
+
+        // Victim's cooldown must be untouched by the unsolicited dust transfer.
+        assertEq(vaultStd.depositTimestamp(user), block.timestamp - vaultStd.WITHDRAWAL_COOLDOWN());
+        assertGt(vaultStd.maxRedeem(user), 0, "victim must still be able to redeem immediately");
+
+        uint256 balBefore = eurc.balanceOf(user);
+        vm.prank(user);
+        vaultStd.redeem(victimShares, user, user);
+        assertApproxEqAbs(eurc.balanceOf(user), balBefore + DEPOSIT, 1e3);
+
+        // Sanity: attacker's own fresh position is still on cooldown.
+        vm.expectRevert();
+        vm.prank(attacker);
+        vaultStd.redeem(attackerShares - 1, attacker, attacker);
+    }
+
+    // A user moving their own shares to a fresh wallet (self-custody, hardware
+    // wallet, etc.) right after depositing must NOT be blocked — the transfer
+    // succeeds, the new wallet just inherits the remaining cooldown (F-09 intact).
+    function test_f01_selfTransfer_to_freshWallet_succeeds_but_inherits_cooldown() public {
+        uint256 shares = _deposit(vaultStd, user, DEPOSIT);
+        address personalWallet = makeAddr("personalWallet");
+
+        // Still within cooldown — transfer itself must not revert.
+        vm.prank(user);
+        vaultStd.transfer(personalWallet, shares);
+
+        assertEq(vaultStd.depositTimestamp(personalWallet), vaultStd.depositTimestamp(user));
+
+        // Inherited cooldown still blocks immediate withdrawal (F-09 preserved).
+        vm.expectRevert();
+        vm.prank(personalWallet);
+        vaultStd.redeem(shares, personalWallet, personalWallet);
+
+        // After the (inherited) cooldown elapses, the personal wallet can redeem.
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
+        uint256 balBefore = eurc.balanceOf(personalWallet);
+        vm.prank(personalWallet);
+        vaultStd.redeem(shares, personalWallet, personalWallet);
+        assertApproxEqAbs(eurc.balanceOf(personalWallet), balBefore + DEPOSIT, 1e3);
+    }
+
     function test_f09_cooldown_bypassed_when_paused() public {
         uint256 shares = _deposit(vaultStd, user, DEPOSIT);
 
