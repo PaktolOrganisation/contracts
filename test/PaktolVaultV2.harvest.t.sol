@@ -327,4 +327,36 @@ contract PaktolVaultV2HarvestTest is PaktolVaultV2Base {
         vm.expectRevert();
         vaultStd.harvest();
     }
+
+    /* ─────────────── F-05: feeShares dilution backstop ──────────────── */
+
+    // A large one-off yield (50% of capital in one harvest) already sends most
+    // of it to treasury by design (CAP_BPS limits toUsers) — must stay well
+    // under the 99% backstop and NOT revert.
+    function test_f05_harvest_largeYield_belowBackstop_succeeds() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.minHarvestInterval() + 1);
+        mockStd.simulateYield(DEPOSIT / 2);
+
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        assertGt(vaultStd.balanceOf(treasury), 0, "treasury still receives its fee shares");
+    }
+
+    // Yield far exceeding pre-existing capital in a single harvest pushes
+    // toTreasury toward `current` (denom collapsing) — must revert instead of
+    // minting a catastrophic number of shares.
+    function test_f05_harvest_revert_feeSharesTooLarge() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.minHarvestInterval() + 1);
+        mockStd.simulateYield(DEPOSIT * 10);
+
+        vm.expectPartialRevert(PaktolVaultV2.FeeSharesTooLarge.selector);
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        // Failed harvest must not leave any partial state change.
+        assertEq(vaultStd.lastTotalAssets(), DEPOSIT, "lastTotalAssets must be untouched on revert");
+    }
 }

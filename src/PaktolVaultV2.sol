@@ -55,6 +55,13 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     uint256 public constant WITHDRAWAL_COOLDOWN = 4 hours;
 
+    /// @notice Sanity backstop on harvest() dilution: feeShares minted to the
+    ///         treasury may never exceed this fraction of the pre-mint totalSupply()
+    ///         (9900 = 99%). Guards against toTreasury approaching current (denom
+    ///         collapsing toward zero) minting a catastrophic number of shares —
+    ///         see F-05. Not a precise economic bound, a circuit breaker.
+    uint256 public constant MAX_HARVEST_DILUTION_BPS = 9900;
+
     /* ─────────────────────────── IMMUTABLES ────────────────────────── */
 
     uint256 public immutable CAP_BPS;
@@ -121,6 +128,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     error WithdrawalCooldown(uint256 availableAt);
     error RolesNotSeparated();
     error CannotRescueToken(address token);
+    error FeeSharesTooLarge(uint256 feeShares, uint256 maxFeeShares);
 
     /* ─────────────────────────── CONSTRUCTOR ───────────────────────── */
 
@@ -463,6 +471,8 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
             uint256 feeShares = toTreasury
                 * (totalSupply() + 10 ** _decimalsOffset())
                 / denom;
+            uint256 maxFeeShares = (totalSupply() * MAX_HARVEST_DILUTION_BPS) / BPS_DENOMINATOR;
+            if (feeShares > maxFeeShares) revert FeeSharesTooLarge(feeShares, maxFeeShares);
             _mint(TREASURY, feeShares);
         }
 
