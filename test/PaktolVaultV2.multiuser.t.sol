@@ -86,8 +86,12 @@ contract PaktolVaultV2MultiUserTest is PaktolVaultV2Base {
         assertApproxEqAbs(maxR, shares, 1e3);
     }
 
-    // F-04: byzantineRealLiquidity() is the dedicated real-liquidity signal —
-    // unlike maxWithdraw()/maxRedeem() above, it DOES reflect Byzantine's cap.
+    // F-04: byzantineRealLiquidity() correctly wires through whatever the target
+    // vault's maxWithdraw() reports. Tested here against a spec-compliant mock that
+    // actually implements liquidity capping — NOT a claim about real Byzantine, whose
+    // maxWithdraw() is verified to always hardcode 0 regardless of real liquidity (see
+    // PaktolVaultV2ForkEthereum.t.sol::test_fork_eth_byzantineRealLiquidity_matches_real_vault
+    // for the documented current real-world limitation).
     function test_f04_byzantineRealLiquidity_reflectsCap() public {
         _deposit(vaultStd, user, DEPOSIT);
         _warp(vaultStd.WITHDRAWAL_COOLDOWN());

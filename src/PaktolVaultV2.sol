@@ -216,17 +216,20 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         return idle + byzAssets;
     }
 
-    /// @notice Real-time redeemable liquidity, as reported by Byzantine itself —
-    ///         distinct from maxWithdraw()/maxRedeem(), which value the Byzantine
-    ///         position via convertToAssets() (an accounting valuation, not a
-    ///         liquidity guarantee). Under Morpho market stress, Byzantine's own
-    ///         maxWithdraw() can drop below convertToAssets(), meaning a withdraw()
-    ///         that maxWithdraw() said was safe could still revert.
-    /// @dev    Additive signal only — does NOT replace maxWithdraw()/maxRedeem(), since
-    ///         some Byzantine configurations (e.g. MetaMorpho sandbox with no markets)
-    ///         are known to under-report maxWithdraw() even when funds are fully
-    ///         redeemable (see maxWithdraw() dev note). Treat this as a conservative
-    ///         additional check before submitting a large withdrawal, not as ground truth.
+    /// @notice KNOWN LIMITATION (verified on live Byzantine, Ethereum mainnet, 2026-07-30):
+    ///         Byzantine's own maxWithdraw()/maxRedeem() are hardcoded to always return 0
+    ///         (`function maxWithdraw(address) external pure returns (uint256) { return 0; }`
+    ///         in their VaultV2.sol — an inherent design choice of the Morpho Vault V2
+    ///         standard, not a situational under-report). Confirmed on-chain: their own
+    ///         largest holder (79% of supply, a fully legitimate position) also reads 0.
+    ///         As a direct consequence, this function currently always evaluates to
+    ///         idle EURC only — it provides NO additional signal over reading the raw
+    ///         balance directly, and cannot warn about real Byzantine-side illiquidity.
+    /// @dev    Kept calling BYZANTINE_VAULT.maxWithdraw() anyway (rather than hardcoding
+    ///         this to just `idle`) purely for forward compatibility: if Byzantine, or any
+    ///         future BYZANTINE_VAULT target, ever implements this correctly, this function
+    ///         starts reflecting real liquidity automatically, with no redeploy needed.
+    ///         Do not treat its current output as a liquidity guarantee of any kind.
     function byzantineRealLiquidity() public view returns (uint256) {
         uint256 idle = IERC20(asset()).balanceOf(address(this));
         return idle + BYZANTINE_VAULT.maxWithdraw(address(this));
