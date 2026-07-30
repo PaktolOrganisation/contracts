@@ -96,6 +96,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     event EmergencyExitV2(uint256 amount, uint256 timestamp);
     event PremiumAccessGranted(address indexed user, uint256 expiry);
     event TokenRescued(address indexed token, address indexed to, uint256 amount);
+    event RedeployedToByzantine(uint256 amount, uint256 timestamp);
 
     /* ───────────────────────────── ERRORS ──────────────────────────── */
 
@@ -516,6 +517,15 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         lastTreasuryAssets   = convertToAssets(balanceOf(TREASURY));
         lastHarvestTimestamp = block.timestamp;
         emit EmergencyExitV2(withdrawn, block.timestamp);
+    }
+
+    /// @notice Redeploys idle EURC back to Byzantine after an emergency exit.
+    ///         Only callable once unpaused — never during an ongoing emergency.
+    function redeployToByzantine() external onlyOwner whenNotPaused nonReentrant {
+        uint256 amount = IERC20(asset()).balanceOf(address(this));
+        _depositToByzantine();
+        lastTotalAssets = totalAssets();
+        emit RedeployedToByzantine(amount, block.timestamp);
     }
 
     /// @notice Recovers ERC20 tokens accidentally sent to this contract.

@@ -250,6 +250,67 @@ contract PaktolVaultV2EmergencyTest is PaktolVaultV2Base {
         assertApproxEqAbs(eurc.balanceOf(user), balBefore + DEPOSIT, 1e3);
     }
 
+    /* ─────────────────── F-08: redeployToByzantine ──────────────────── */
+
+    function test_f08_redeploy_pushesIdleBackToByzantine() public {
+        _deposit(vaultStd, user, DEPOSIT);
+
+        vm.prank(owner);
+        vaultStd.emergencyExitByzantine();
+        assertApproxEqAbs(eurc.balanceOf(address(vaultStd)), DEPOSIT, 1e3, "idle after exit");
+
+        vm.prank(owner);
+        vaultStd.unpause();
+
+        vm.prank(owner);
+        vaultStd.redeployToByzantine();
+
+        assertEq(eurc.balanceOf(address(vaultStd)), 0, "no idle EURC after redeploy");
+        assertGt(mockStd.balanceOf(address(vaultStd)), 0, "Byzantine shares restored");
+    }
+
+    function test_f08_redeploy_revert_unauthorized() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        vm.prank(owner);
+        vaultStd.emergencyExitByzantine();
+        vm.prank(owner);
+        vaultStd.unpause();
+
+        vm.expectRevert();
+        vm.prank(user);
+        vaultStd.redeployToByzantine();
+    }
+
+    function test_f08_redeploy_revert_whenPaused() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        vm.prank(owner);
+        vaultStd.emergencyExitByzantine();
+
+        // Still paused — must not be able to redeploy mid-emergency.
+        vm.expectRevert();
+        vm.prank(owner);
+        vaultStd.redeployToByzantine();
+    }
+
+    function test_f08_redeploy_noOp_whenNoIdle() public {
+        vm.prank(owner);
+        vaultStd.redeployToByzantine();
+        assertEq(eurc.balanceOf(address(vaultStd)), 0);
+    }
+
+    function test_f08_redeploy_emitsEvent() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        vm.prank(owner);
+        vaultStd.emergencyExitByzantine();
+        vm.prank(owner);
+        vaultStd.unpause();
+
+        vm.expectEmit(false, false, false, true);
+        emit PaktolVaultV2.RedeployedToByzantine(DEPOSIT, block.timestamp);
+        vm.prank(owner);
+        vaultStd.redeployToByzantine();
+    }
+
     function test_f09_maxWithdraw_zero_during_cooldown() public {
         _deposit(vaultStd, user, DEPOSIT);
 
