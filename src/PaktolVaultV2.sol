@@ -208,6 +208,22 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         return idle + byzAssets;
     }
 
+    /// @notice Real-time redeemable liquidity, as reported by Byzantine itself —
+    ///         distinct from maxWithdraw()/maxRedeem(), which value the Byzantine
+    ///         position via convertToAssets() (an accounting valuation, not a
+    ///         liquidity guarantee). Under Morpho market stress, Byzantine's own
+    ///         maxWithdraw() can drop below convertToAssets(), meaning a withdraw()
+    ///         that maxWithdraw() said was safe could still revert.
+    /// @dev    Additive signal only — does NOT replace maxWithdraw()/maxRedeem(), since
+    ///         some Byzantine configurations (e.g. MetaMorpho sandbox with no markets)
+    ///         are known to under-report maxWithdraw() even when funds are fully
+    ///         redeemable (see maxWithdraw() dev note). Treat this as a conservative
+    ///         additional check before submitting a large withdrawal, not as ground truth.
+    function byzantineRealLiquidity() public view returns (uint256) {
+        uint256 idle = IERC20(asset()).balanceOf(address(this));
+        return idle + BYZANTINE_VAULT.maxWithdraw(address(this));
+    }
+
     /// @notice Returns 0 within WITHDRAWAL_COOLDOWN window (vault not paused).
     ///         Liquid = idle EURC + Byzantine position (convertToAssets of our shares).
     ///         Using convertToAssets instead of BYZANTINE_VAULT.maxWithdraw() because

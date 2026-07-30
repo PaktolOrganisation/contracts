@@ -86,6 +86,33 @@ contract PaktolVaultV2MultiUserTest is PaktolVaultV2Base {
         assertApproxEqAbs(maxR, shares, 1e3);
     }
 
+    // F-04: byzantineRealLiquidity() is the dedicated real-liquidity signal —
+    // unlike maxWithdraw()/maxRedeem() above, it DOES reflect Byzantine's cap.
+    function test_f04_byzantineRealLiquidity_reflectsCap() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
+
+        // Uncapped: real liquidity matches the full position (no idle EURC held).
+        assertApproxEqAbs(vaultStd.byzantineRealLiquidity(), DEPOSIT, 1e3);
+
+        mockStd.setLiquidityCap(100e6);
+
+        // Capped: byzantineRealLiquidity() reports the true constraint...
+        assertApproxEqAbs(vaultStd.byzantineRealLiquidity(), 100e6, 1);
+        // ...while maxWithdraw() still (knowingly) reports the accounting value.
+        assertApproxEqAbs(vaultStd.maxWithdraw(user), DEPOSIT, 1e3);
+    }
+
+    function test_f04_byzantineRealLiquidity_includesIdle() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        mockStd.setLiquidityCap(0);
+
+        eurc.mint(address(vaultStd), 50e6);
+        // Not swept via a deposit, so it's real idle EURC sitting in the contract —
+        // byzantineRealLiquidity() must count it even though Byzantine is fully illiquid.
+        assertEq(vaultStd.byzantineRealLiquidity(), 50e6);
+    }
+
     function test_maxWithdraw_idleCountsTowardLiquidity() public {
         _deposit(vaultStd, user, DEPOSIT);
 
