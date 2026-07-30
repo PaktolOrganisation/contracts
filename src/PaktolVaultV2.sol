@@ -95,6 +95,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     event MinDepositUpdated(uint256 oldMinDeposit, uint256 newMinDeposit);
     event EmergencyExitV2(uint256 amount, uint256 timestamp);
     event PremiumAccessGranted(address indexed user, uint256 expiry);
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
 
     /* ───────────────────────────── ERRORS ──────────────────────────── */
 
@@ -113,6 +114,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     error PremiumAccessExpired(uint256 expiredAt);
     error WithdrawalCooldown(uint256 availableAt);
     error RolesNotSeparated();
+    error CannotRescueToken(address token);
 
     /* ─────────────────────────── CONSTRUCTOR ───────────────────────── */
 
@@ -514,5 +516,17 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         lastTreasuryAssets   = convertToAssets(balanceOf(TREASURY));
         lastHarvestTimestamp = block.timestamp;
         emit EmergencyExitV2(withdrawn, block.timestamp);
+    }
+
+    /// @notice Recovers ERC20 tokens accidentally sent to this contract.
+    ///         Cannot touch the vault's own asset(), Byzantine shares, or this
+    ///         vault's own shares (address(this)) — those belong to depositors,
+    ///         not to operational error recovery.
+    function rescueToken(address token, address to, uint256 amount) external onlyOwner {
+        if (token == asset() || token == address(BYZANTINE_VAULT) || token == address(this)) {
+            revert CannotRescueToken(token);
+        }
+        IERC20(token).safeTransfer(to, amount);
+        emit TokenRescued(token, to, amount);
     }
 }

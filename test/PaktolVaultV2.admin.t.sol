@@ -234,4 +234,60 @@ contract PaktolVaultV2AdminTest is PaktolVaultV2Base {
         vaultStd.acceptOwnership();
         assertEq(vaultStd.owner(), newOwner);
     }
+
+    /* ───────────────────── F-07: rescueToken ────────────────────────── */
+
+    function test_f07_rescueToken_byOwner() public {
+        MockEURC randomToken = new MockEURC();
+        randomToken.mint(address(vaultStd), 1_000e6);
+
+        vm.prank(owner);
+        vaultStd.rescueToken(address(randomToken), owner, 1_000e6);
+
+        assertEq(randomToken.balanceOf(owner), 1_000e6);
+        assertEq(randomToken.balanceOf(address(vaultStd)), 0);
+    }
+
+    function test_f07_rescueToken_emitsEvent() public {
+        MockEURC randomToken = new MockEURC();
+        randomToken.mint(address(vaultStd), 500e6);
+
+        vm.expectEmit(true, true, false, true);
+        emit PaktolVaultV2.TokenRescued(address(randomToken), owner, 500e6);
+        vm.prank(owner);
+        vaultStd.rescueToken(address(randomToken), owner, 500e6);
+    }
+
+    function test_f07_rescueToken_revert_unauthorized() public {
+        MockEURC randomToken = new MockEURC();
+        randomToken.mint(address(vaultStd), 500e6);
+
+        vm.expectRevert();
+        vm.prank(user);
+        vaultStd.rescueToken(address(randomToken), user, 500e6);
+    }
+
+    function test_f07_rescueToken_revert_asset() public {
+        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.CannotRescueToken.selector, address(eurc)));
+        vm.prank(owner);
+        vaultStd.rescueToken(address(eurc), owner, 1);
+    }
+
+    function test_f07_rescueToken_revert_byzantineShares() public {
+        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.CannotRescueToken.selector, address(mockStd)));
+        vm.prank(owner);
+        vaultStd.rescueToken(address(mockStd), owner, 1);
+    }
+
+    // A user mistakenly sending their own vault shares to the vault's address
+    // must not let the owner "rescue" (i.e. appropriate) those misplaced shares.
+    function test_f07_rescueToken_revert_ownShares() public {
+        uint256 shares = _deposit(vaultStd, user, DEPOSIT);
+        vm.prank(user);
+        vaultStd.transfer(address(vaultStd), shares);
+
+        vm.expectRevert(abi.encodeWithSelector(PaktolVaultV2.CannotRescueToken.selector, address(vaultStd)));
+        vm.prank(owner);
+        vaultStd.rescueToken(address(vaultStd), owner, shares);
+    }
 }
