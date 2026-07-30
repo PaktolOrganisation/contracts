@@ -107,6 +107,36 @@ contract PaktolVaultV2DepositTest is PaktolVaultV2Base {
         assertEq(shares, 0);
     }
 
+    // F-06: depositUpToCap must return (0,0) instead of reverting when the
+    // remaining cap headroom is non-zero but below minDeposit.
+    function test_f06_depositUpToCap_returns_zero_when_remaining_below_minDeposit() public {
+        uint256 cap = 1_000e6 + 500;
+        PaktolVaultV2 capped = new PaktolVaultV2(
+            IERC20(address(eurc)), "x", "x", owner, treasury, CAP_STD, FEE_STD,
+            guardian, harvester, address(0), address(mockStd), cap, false
+        );
+        eurc.mint(user, 1_000e6);
+        vm.startPrank(user);
+        eurc.approve(address(capped), 1_000e6);
+        capped.deposit(1_000e6, user);
+        vm.stopPrank();
+
+        _warp(capped.WITHDRAWAL_COOLDOWN());
+
+        // Remaining headroom is 500 wei — below minDeposit (1e3) but non-zero.
+        assertLt(capped.maxDeposit(user2), capped.minDeposit());
+        assertGt(capped.maxDeposit(user2), 0);
+
+        eurc.mint(user2, 1e6);
+        vm.startPrank(user2);
+        eurc.approve(address(capped), 1e6);
+        (uint256 accepted, uint256 shares) = capped.depositUpToCap(1e6, user2);
+        vm.stopPrank();
+
+        assertEq(accepted, 0, "must not accept dust below minDeposit");
+        assertEq(shares, 0);
+    }
+
     function test_f19_deposit_still_reverts_at_cap() public {
         uint256 cap = 1_000e6;
         PaktolVaultV2 capped = new PaktolVaultV2(

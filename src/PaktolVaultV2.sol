@@ -286,6 +286,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 remaining = maxDeposit(receiver);
         if (remaining == 0) return (0, 0);
         accepted = assets > remaining ? remaining : assets;
+        if (accepted < minDeposit) return (0, 0);
         shares = _executeDeposit(accepted, receiver);
     }
 
