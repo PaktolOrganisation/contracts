@@ -112,6 +112,42 @@ contract PaktolVaultV2SecurityTest is PaktolVaultV2Base {
         assertLt(attackerAssets, 1e3 + 10_000e6, "attacker gains nothing from donation");
     }
 
+    /* ══════════════════════════════════════════════════════════════════
+       1b. F-03: DONATIONS MUST NOT BE COUNTED AS YIELD
+       ══════════════════════════════════════════════════════════════════ */
+
+    /// @dev A direct EURC transfer must not move totalAssets(), and therefore
+    ///      must not be split between users/treasury at the next harvest() —
+    ///      until it is explicitly swept by a subsequent deposit.
+    function test_f03_donation_not_counted_as_yield_until_swept() public {
+        _deposit(vaultStd, user, DEPOSIT);
+        uint256 totalAssetsBefore = vaultStd.totalAssets();
+
+        eurc.mint(address(this), 5_000e6);
+        eurc.transfer(address(vaultStd), 5_000e6);
+
+        // Donation must be invisible to accounting immediately.
+        assertEq(vaultStd.totalAssets(), totalAssetsBefore, "donation must not move totalAssets");
+        assertEq(eurc.balanceOf(address(vaultStd)), 5_000e6, "EURC really sits in the contract though");
+
+        _warp(vaultStd.minHarvestInterval());
+        vm.expectEmit(false, false, false, true);
+        emit PaktolVaultV2.HarvestSkipped(totalAssetsBefore, block.timestamp);
+        vm.prank(harvester);
+        vaultStd.harvest();
+
+        assertEq(vaultStd.lastTotalAssets(), totalAssetsBefore, "harvest must ignore the donation");
+
+        // Only once a real deposit sweeps idle EURC into Byzantine does the
+        // donation start counting — same trade-off already accepted in V1.
+        _warp(vaultStd.WITHDRAWAL_COOLDOWN());
+        _deposit(vaultStd, user2, DEPOSIT);
+        assertApproxEqAbs(
+            vaultStd.totalAssets(), totalAssetsBefore + 5_000e6 + DEPOSIT, 1e3,
+            "donation appears only after being swept by a deposit"
+        );
+    }
+
     /// @dev Fuzz: any deposit amount >= minDeposit always produces > 0 shares.
     function testFuzz_deposit_always_produces_shares(uint256 assets) public {
         assets = bound(assets, vaultStd.minDeposit(), 1_000_000e6);

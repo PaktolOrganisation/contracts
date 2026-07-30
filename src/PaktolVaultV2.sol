@@ -75,6 +75,11 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public lastTotalAssets;
     uint256 public lastTreasuryAssets;
     uint256 public lastHarvestTimestamp;
+
+    /// @dev Tracks EURC held idle by this contract (e.g. after emergencyExitByzantine()).
+    ///      Explicit tracking prevents donations from inflating totalAssets() (F-03).
+    uint256 private _idleBalance;
+
     mapping(address => uint256) public depositTimestamp;
     mapping(address => uint256) public premiumExpiry;
     address public guardian;
@@ -230,11 +235,14 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
 
     /* ──────────────────────────── TOTAL ASSETS ─────────────────────── */
 
-    /// @notice Byzantine shares converted to EURC + any idle EURC held by this vault.
+    /// @notice Byzantine shares converted to EURC + tracked idle EURC held by this vault.
+    /// @dev Uses _idleBalance instead of balanceOf(address(this)) to prevent donation
+    ///      inflation (F-03). Direct EURC transfers to this contract are silently ignored
+    ///      in yield accounting until swept by the next _depositToByzantine() call.
     function totalAssets() public view override returns (uint256) {
         uint256 bzyShares = BYZANTINE_VAULT.balanceOf(address(this));
         uint256 bzyValue  = bzyShares > 0 ? BYZANTINE_VAULT.convertToAssets(bzyShares) : 0;
-        return bzyValue + IERC20(asset()).balanceOf(address(this));
+        return bzyValue + _idleBalance;
     }
 
     /* ─────────────────────── BYZANTINE ROUTING ─────────────────────── */
@@ -245,6 +253,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
     function _depositToByzantine() internal {
         uint256 amount = IERC20(asset()).balanceOf(address(this));
         if (amount == 0) return;
+        _idleBalance = 0;
         IERC20(asset()).forceApprove(address(BYZANTINE_VAULT), amount);
         BYZANTINE_VAULT.deposit(amount, address(this));
     }
@@ -369,9 +378,12 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         if (caller != owner_) _spendAllowance(owner_, caller, shares);
         _burn(owner_, shares);
         emit Withdraw(caller, receiver, owner_, assets, shares);
-        uint256 idle = IERC20(asset()).balanceOf(address(this));
+        uint256 idle = _idleBalance;
         if (idle < assets) {
             BYZANTINE_VAULT.withdraw(assets - idle, address(this), address(this));
+        }
+        if (idle > 0) {
+            _idleBalance = idle > assets ? idle - assets : 0;
         }
         IERC20(asset()).safeTransfer(receiver, assets);
     }
@@ -513,6 +525,7 @@ contract PaktolVaultV2 is ERC4626, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 shares = BYZANTINE_VAULT.balanceOf(address(this));
         if (shares == 0) return;
         uint256 withdrawn = BYZANTINE_VAULT.redeem(shares, address(this), address(this));
+        _idleBalance         = withdrawn;
         lastTotalAssets      = totalAssets();
         lastTreasuryAssets   = convertToAssets(balanceOf(TREASURY));
         lastHarvestTimestamp = block.timestamp;
