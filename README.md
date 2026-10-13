@@ -52,7 +52,22 @@ Deployed. Addresses managed internally.
 | F-22 — `emergencyExitAave()` uses `type(uint256).max` | P2 | ✅ Fixed |
 | F-06, F-17, F-23, F-26, F-27 | P2 | ✅ Fixed |
 
-**V2 — Not yet audited.**
+**V2 — Security audit completed.**
+
+`PaktolVaultV2.sol` (V2) was audited by [Crypto4All](https://crypto4all.com) (final report, 26/08/2026). Score: 77.3 / 100 before remediation → **100 / 100** after. Final validated commit: `545cd06`.
+
+📄 [Full report (PDF)](audits/2026-08_Crypto4All_PaktolVaultV2_Security_Audit.pdf)
+
+| Finding | Severity | Status |
+|---------|----------|--------|
+| F-04 — `byzantineRealLiquidity()` separates real liquidity from `convertToAssets` valuation | Medium (P1) | ✅ Fixed (`5f885c3`) |
+| F-02 — Dead points-based premium gating removed (access authorized off-chain) | Medium (P1) | ✅ Fixed (`86aba83`) |
+| F-03 — Idle balance tracked so donations no longer inflate `totalAssets()` | Medium (P2) | ✅ Fixed (`d2abeda`) |
+| F-05 — `harvest()` fee shares mint capped at 99% of `totalSupply` | Low (P2) | ✅ Fixed (`10fab7a`) |
+| F-01 — Dust transfers can no longer grief an existing cooldown | Low (P1) | ✅ Fixed (`97cd595`) |
+| F-06 — `depositUpToCap()` returns `(0,0)` instead of reverting on dust | Low (P3) | ✅ Fixed (`dd59bf2`) |
+| F-08 — `redeployToByzantine()` for post-emergency resumption | Info (P3) | ✅ Fixed (`f592ebd`) |
+| F-07 — `rescueToken()` for accidentally sent ERC20s | Info (P3) | ✅ Fixed (`a9e2a22`) |
 
 ## Stack
 
