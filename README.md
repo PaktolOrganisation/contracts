@@ -1,11 +1,11 @@
 # paktol-contracts
 
-ERC-4626 vaults routing stablecoin deposits into yield sources on two chains.
+ERC-4626 vaults routing stablecoin deposits into yield sources on Gnosis, Base and Ethereum.
 
 | Version | Chain | Asset | Yield source |
 |---------|-------|-------|--------------|
 | V1 | Gnosis Chain | EURe (Monerium) | AAVE v3 |
-| V2 | Base Mainnet | EURC (Circle) | Byzantine Finance VaultV2 (Morpho-backed) |
+| V2 | Base Mainnet, Ethereum Mainnet | EURC (Circle) | Byzantine Finance VaultV2 (Morpho-backed) |
 
 Each version ships two vault instances — **Standard** and **Premium**:
 
@@ -13,7 +13,7 @@ Each version ships two vault instances — **Standard** and **Premium**:
 |--|----------|---------|
 | AUM fee | 0.5% / year | 0.5% / year |
 | User yield cap | 3.5% / year | 5% / year |
-| Access | Open | Points-gated (V2) / Backend-signed EIP-712 (V1) |
+| Access | Open | Backend-granted, time-limited `grantPremiumAccess()` (V2) / Backend-signed EIP-712 (V1) |
 
 ## Deployed contracts
 
@@ -26,6 +26,10 @@ Each version ships two vault instances — **Standard** and **Premium**:
 
 - Byzantine vault: `0x061b3aff8e21a9d194ce43cEfc20A0eFf122Ec69`
 - Treasury: `0x3469682e65faFc2d2fAE93f528230B899B183a84`
+
+### V2 — Ethereum Mainnet
+
+Not yet deployed. Deployment script: `script/DeployEthereumV2.s.sol` (EURC `0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c`). The vault address must be whitelisted by Byzantine on its Ethereum gates before deposits go live.
 
 ### V1 — Gnosis Chain
 
@@ -88,6 +92,9 @@ GNOSIS_RPC_URL=https://... forge test --match-contract PaktolVaultForkTest
 # Fork tests — V2 (requires Base mainnet RPC)
 forge test --match-contract PaktolVaultV2ForkBase --fork-url https://mainnet.base.org
 
+# Fork tests — V2 (requires Ethereum mainnet RPC)
+forge test --match-contract PaktolVaultV2ForkEthereum --fork-url https://ethereum-rpc.publicnode.com
+
 # Hardhat (V1 business scenarios)
 npm install
 npm test
@@ -107,6 +114,9 @@ forge script script/DeploySepolia.s.sol --rpc-url $SEPOLIA_RPC_URL --broadcast
 # V2 — Base Mainnet
 forge script script/DeployBaseV2.s.sol --rpc-url $BASE_RPC_URL --broadcast --verify
 
+# V2 — Ethereum Mainnet
+forge script script/DeployEthereumV2.s.sol:DeployEthereumV2 --rpc-url $ETHEREUM_RPC_URL --broadcast --verify
+
 # V2 — Sepolia
 forge script script/DeploySepoliaV2.s.sol --rpc-url $SEPOLIA_RPC_URL --broadcast
 ```
@@ -116,7 +126,7 @@ forge script script/DeploySepoliaV2.s.sol --rpc-url $SEPOLIA_RPC_URL --broadcast
 ```
 src/
   PaktolVault.sol          — V1: EURe → AAVE v3 (Gnosis)
-  PaktolVaultV2.sol        — V2: EURC → Byzantine Finance (Base)
+  PaktolVaultV2.sol        — V2: EURC → Byzantine Finance (Base, Ethereum)
   interfaces/
     IAavePool.sol
 
@@ -133,16 +143,18 @@ test/
   PaktolVaultV2.harvest.t.sol
   PaktolVaultV2.multiuser.t.sol
   PaktolVaultV2.permit.t.sol
-  PaktolVaultV2.points.t.sol     — V2 points-gated premium access
+  PaktolVaultV2.points.t.sol     — V2 premium access (grantPremiumAccess / expiry)
   PaktolVaultV2.security.t.sol   — V2 security / adversarial tests
   PaktolVaultV2.treasury.t.sol
   PaktolVaultV2Base.t.sol        — V2 base setup helpers
   PaktolVaultV2ForkBase.t.sol    — V2 fork tests (Base mainnet)
+  PaktolVaultV2ForkEthereum.t.sol — V2 fork tests (Ethereum mainnet)
   mocks/
 
 script/
   Deploy.s.sol             — V1 Gnosis mainnet
   DeploySepolia.s.sol      — V1 Sepolia testnet
   DeployBaseV2.s.sol       — V2 Base mainnet
+  DeployEthereumV2.s.sol   — V2 Ethereum mainnet
   DeploySepoliaV2.s.sol    — V2 Sepolia testnet
 ```
